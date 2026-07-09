@@ -1,0 +1,80 @@
+name: Deploy Admin
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "mall-admin/**"
+      - ".github/workflows/deploy-admin.yml"
+  workflow_dispatch:
+
+env:
+  APP_DIR: mall-admin
+  DEPLOY_DIR: /opt/mall/admin
+
+jobs:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(join(github.event.commits.*.message, '\n'), '[deploy]')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run build
+
+      - name: Package dist
+        run: tar -C "${{ env.APP_DIR }}/dist" -czf mall-admin.tar.gz .
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.SERVER_PORT }}" "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload release
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.SERVER_PORT }}" \
+            mall-admin.tar.gz \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/mall-admin.tar.gz"
+
+      - name: Deploy on server
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SERVER_PORT }}" \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'EOF'
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            SUDO="sudo"
+          fi
+
+          $SUDO mkdir -p "${{ env.DEPLOY_DIR }}/dist"
+          $SUDO find "${{ env.DEPLOY_DIR }}/dist" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          $SUDO tar -xzf /tmp/mall-admin.tar.gz -C "${{ env.DEPLOY_DIR }}/dist"
+          $SUDO nginx -t
+          $SUDO systemctl reload nginx
+          EOF
