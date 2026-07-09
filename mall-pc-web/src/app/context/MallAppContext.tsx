@@ -508,7 +508,8 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     }
 
     try {
-      const preview = orderPreview ?? await orderApi.preview({ address_id: selectedAddressId, items });
+      const preview = await orderApi.preview({ address_id: selectedAddressId, items });
+      setOrderPreview(preview);
       const order = await orderApi.create({
         address_id: selectedAddressId,
         remark: "PC 端下单",
@@ -524,7 +525,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "创建订单失败");
     }
-  }, [cart, navigateToPath, orderPreview, refreshCart, selectedAddressId]);
+  }, [cart, navigateToPath, refreshCart, selectedAddressId]);
 
   const createPayment = useCallback(async (channel: PayChannel, scene?: PayScene): Promise<PaymentResponse | null> => {
     if (!lastOrder) {
