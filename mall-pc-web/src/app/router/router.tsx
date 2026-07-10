@@ -117,6 +117,8 @@ const AccountRoute: React.FC<{ view?: AccountView }> = ({ view = "overview" }) =
     handleRegister,
     lastOrder,
     navigateProtected,
+    openOrderPayment,
+    orders,
     setDefaultAddress,
     updateAddress,
     updateProfile
@@ -151,10 +153,12 @@ const AccountRoute: React.FC<{ view?: AccountView }> = ({ view = "overview" }) =
     <AccountPage
       addresses={addresses}
       lastOrder={lastOrder}
+      orders={orders}
       onAddressCreate={createAddress}
       onAddressDelete={deleteAddress}
       onAddressSetDefault={setDefaultAddress}
       onAddressUpdate={updateAddress}
+      onOrderPay={openOrderPayment}
       onProfileUpdate={updateProfile}
       user={auth.user}
       view={view}

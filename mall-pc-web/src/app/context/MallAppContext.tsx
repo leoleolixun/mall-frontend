@@ -27,6 +27,7 @@ export interface MallAppContextValue {
   isLoggedIn: boolean;
   lastOrder: OrderResponse | null;
   notice: string;
+  orders: OrderResponse[];
   orderPreview: OrderPreviewResponse | null;
   currentPayment: PaymentResponse | null;
   productDetail: ProductDetailResponse | null;
@@ -46,6 +47,7 @@ export interface MallAppContextValue {
   navigateProtected: (to: string) => void;
   navigateToPage: (page: PageKey) => void;
   openCurrentProductReviews: () => void;
+  openOrderPayment: (order: OrderResponse) => void;
   openProduct: (product: Product) => void;
   setDefaultAddress: (id: number) => Promise<boolean>;
   setGlobalSearch: (value: string) => void;
@@ -114,6 +116,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   const [addresses, setAddresses] = useState<AddressResponse[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<number | undefined>();
   const [orderPreview, setOrderPreview] = useState<OrderPreviewResponse | null>(null);
+  const [orders, setOrders] = useState<OrderResponse[]>([]);
   const [lastOrder, setLastOrder] = useState<OrderResponse | null>(null);
   const [currentPayment, setCurrentPayment] = useState<PaymentResponse | null>(null);
   const [redirectAfterLogin, setRedirectAfterLogin] = useState("/");
@@ -181,6 +184,16 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     setSelectedAddressId((current) => current ?? list.find((address) => address.is_default)?.id ?? list[0]?.id);
   }, []);
 
+  const refreshOrders = useCallback(async (): Promise<void> => {
+    if (!authApi.storage.read()?.access_token) {
+      return;
+    }
+
+    const page = await orderApi.list({ page: 1, pageSize: 20 });
+    setOrders(page.list);
+    setLastOrder((current) => current ?? page.list.find((order) => order.status === 1) ?? page.list[0] ?? null);
+  }, []);
+
   const syncGuestCart = useCallback(async (lines: CartLine[]): Promise<void> => {
     const remoteLines = lines.filter((line) => line.skuId && line.quantity > 0);
     for (const line of remoteLines) {
@@ -192,13 +205,17 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     if (!auth) {
       setOrderPreview(null);
       setAddresses([]);
+      setOrders([]);
+      setLastOrder(null);
+      setCurrentPayment(null);
       setSelectedAddressId(undefined);
       return;
     }
 
     void refreshCart().catch((error: Error) => setNotice(error.message));
     void refreshAddresses().catch((error: Error) => setNotice(error.message));
-  }, [auth, refreshAddresses, refreshCart]);
+    void refreshOrders().catch((error: Error) => setNotice(error.message));
+  }, [auth, refreshAddresses, refreshCart, refreshOrders]);
 
   useEffect(() => {
     const items = buildOrderItems(cart);
@@ -517,6 +534,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
         items
       });
       setLastOrder(order);
+      setOrders((current) => [order, ...current.filter((item) => item.id !== order.id)]);
       setCurrentPayment(null);
       setOrderPreview(null);
       await refreshCart();
@@ -526,6 +544,16 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
       setNotice(error instanceof Error ? error.message : "创建订单失败");
     }
   }, [cart, navigateToPath, refreshCart, selectedAddressId]);
+
+  const openOrderPayment = useCallback((order: OrderResponse): void => {
+    if (order.status !== 1) {
+      setNotice("当前订单不需要支付");
+      return;
+    }
+    setLastOrder(order);
+    setCurrentPayment(null);
+    navigateToPath("/payment");
+  }, [navigateToPath]);
 
   const createPayment = useCallback(async (channel: PayChannel, scene?: PayScene): Promise<PaymentResponse | null> => {
     if (!lastOrder) {
@@ -571,6 +599,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
           status: 2,
           status_text: "已支付"
         });
+        setOrders((current) => current.map((order) => order.id === lastOrder.id ? { ...order, status: 2, status_text: "已支付" } : order));
         navigateToPath("/payment/result");
         setNotice("支付成功");
         return;
@@ -599,6 +628,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
         status_text: "已支付"
       };
       setLastOrder(paidOrder);
+      setOrders((current) => current.map((order) => order.id === paidOrder.id ? paidOrder : order));
       setCurrentPayment(paidPayment);
       navigateToPath("/payment/result");
       setNotice("支付成功");
@@ -636,6 +666,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     isLoggedIn,
     lastOrder,
     notice,
+    orders,
     orderPreview,
     currentPayment,
     productDetail,
@@ -655,6 +686,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     navigateProtected,
     navigateToPage,
     openCurrentProductReviews,
+    openOrderPayment,
     openProduct,
     setDefaultAddress,
     setGlobalSearch,
@@ -673,6 +705,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     isLoggedIn,
     lastOrder,
     notice,
+    orders,
     orderPreview,
     currentPayment,
     productDetail,
@@ -692,6 +725,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     navigateProtected,
     navigateToPage,
     openCurrentProductReviews,
+    openOrderPayment,
     openProduct,
     setDefaultAddress,
     simulatePaymentComplete,

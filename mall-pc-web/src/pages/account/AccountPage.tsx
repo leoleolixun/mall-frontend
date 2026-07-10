@@ -50,10 +50,12 @@ export type AccountView =
 interface AccountPageProps {
   addresses: AddressResponse[];
   lastOrder: OrderResponse | null;
+  orders: OrderResponse[];
   onAddressCreate: (payload: AddressRequest) => Promise<boolean>;
   onAddressDelete: (id: number) => Promise<boolean>;
   onAddressSetDefault: (id: number) => Promise<boolean>;
   onAddressUpdate: (id: number, payload: AddressRequest) => Promise<boolean>;
+  onOrderPay: (order: OrderResponse) => void;
   onProfileUpdate: (payload: UpdateProfileRequest) => Promise<boolean>;
   user: AuthResponse["user"];
   view?: AccountView;
@@ -207,33 +209,18 @@ const afterSalesCases = [
   { no: "AS20260702003", product: "基础白 T", status: "已完成", progress: "退款已原路返回" }
 ];
 
-const formatOrderRows = (lastOrder: OrderResponse | null): Array<{ no: string; amount: string; status: string; action: string }> => {
-  if (lastOrder) {
-    return [{
-      no: lastOrder.order_no,
-      amount: formatPrice(moneyFromCent(lastOrder.payable_amount)),
-      status: lastOrder.status_text,
-      action: lastOrder.status_text.includes("待支付") ? "去支付" : "查看"
-    }];
-  }
-
-  return [
-    { no: "202607040001", amount: "¥714", status: "待支付", action: "去支付" },
-    { no: "202607030012", amount: "¥128", status: "待发货", action: "查看" },
-    { no: "202607020030", amount: "¥399", status: "已完成", action: "评价" }
-  ];
-};
-
 const formatAddressText = (address: AddressResponse): string =>
   `${address.province}${address.city}${address.district}${address.detail}`;
 
 export const AccountPage: React.FC<AccountPageProps> = ({
   addresses,
   lastOrder,
+  orders,
   onAddressCreate,
   onAddressDelete,
   onAddressSetDefault,
   onAddressUpdate,
+  onOrderPay,
   onProfileUpdate,
   user,
   view = "overview"
@@ -251,7 +238,16 @@ export const AccountPage: React.FC<AccountPageProps> = ({
   const [messageScope, setMessageScope] = useState<"全部" | "未读">("全部");
   const [recommendEnabled, setRecommendEnabled] = useState(true);
   const [smsEnabled, setSmsEnabled] = useState(true);
-  const orderRows = useMemo(() => formatOrderRows(lastOrder), [lastOrder]);
+  const orderRows = useMemo(() => {
+    const source = orders.length > 0 ? orders : lastOrder ? [lastOrder] : [];
+    return source.map((order) => ({
+      action: order.status === 1 ? "去支付" : "查看",
+      amount: formatPrice(moneyFromCent(order.payable_amount)),
+      order,
+      status: order.status_text,
+      no: order.order_no
+    }));
+  }, [lastOrder, orders]);
   const defaultAddresses = addresses.slice(0, 3);
   const filteredMessages = messageScope === "未读" ? messages.filter((message) => message.unread) : messages;
   const cityOptions = getCityOptions(addressForm.province);
@@ -458,14 +454,22 @@ export const AccountPage: React.FC<AccountPageProps> = ({
           </tr>
         </thead>
         <tbody>
-          {orderRows.map((order) => (
-            <tr key={order.no}>
-              <td>{order.no}</td>
-              <td>{order.amount}</td>
-              <td>{order.status}</td>
-              <td><button type="button">{order.action}</button></td>
+          {orderRows.length > 0 ? orderRows.map((row) => (
+            <tr key={row.no}>
+              <td>{row.no}</td>
+              <td>{row.amount}</td>
+              <td>{row.status}</td>
+              <td>
+                <button onClick={() => row.order.status === 1 ? onOrderPay(row.order) : undefined} type="button">
+                  {row.action}
+                </button>
+              </td>
             </tr>
-          ))}
+          )) : (
+            <tr>
+              <td colSpan={4}>暂无订单</td>
+            </tr>
+          )}
         </tbody>
       </table>
     </section>
