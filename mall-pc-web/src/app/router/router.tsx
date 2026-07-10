@@ -5,6 +5,7 @@ import { createRootRoute, createRoute, createRouter, useParams } from "@tanstack
 import { MallAppProvider, useMallApp } from "@/app/context/MallAppContext";
 import { MainLayout } from "@/app/layouts/MainLayout";
 import { AccountPage, type AccountView } from "@/pages/account/AccountPage";
+import { usePaymentResult } from "@/features/payment/hooks/usePaymentResult";
 import { AuthPage } from "@/pages/auth/AuthPage";
 import { CartEmptyPage } from "@/pages/cart/CartEmptyPage";
 import { CartPage } from "@/pages/cart/CartPage";
@@ -193,12 +194,37 @@ const CheckoutRoute: React.FC = () => {
 };
 
 const PaymentResultRoute: React.FC = () => {
-  const { lastOrder } = useMallApp();
-  return <PaymentResultPage order={lastOrder} />;
+  const { navigateProtected, navigateToPage } = useMallApp();
+  const result = usePaymentResult();
+  return (
+    <PaymentResultPage
+      checking={result.checking}
+      error={result.error}
+      payment={result.payment}
+      onContinueShopping={() => navigateToPage("product-list")}
+      onRetry={result.retry}
+      onViewOrders={() => navigateProtected("/account/orders")}
+    />
+  );
+};
+
+const PaymentFailedRoute: React.FC = () => {
+  const { navigateProtected, navigateToPage } = useMallApp();
+  return (
+    <PaymentResultPage
+      checking={false}
+      error="支付渠道返回失败，请返回订单中心重新发起支付"
+      failed
+      payment={null}
+      onContinueShopping={() => navigateToPage("product-list")}
+      onRetry={() => navigateProtected("/account/orders")}
+      onViewOrders={() => navigateProtected("/account/orders")}
+    />
+  );
 };
 
 const PaymentRoute: React.FC = () => {
-  const { checkPaymentStatus, createPayment, currentPayment, lastOrder, navigateProtected, simulatePaymentComplete } = useMallApp();
+  const { checkPaymentStatus, createPayment, currentPayment, lastOrder, navigateProtected } = useMallApp();
   return (
     <PaymentPage
       order={lastOrder}
@@ -206,7 +232,6 @@ const PaymentRoute: React.FC = () => {
       onBackCheckout={() => navigateProtected("/checkout")}
       onCheckPaymentStatus={checkPaymentStatus}
       onCreatePayment={createPayment}
-      onMockComplete={simulatePaymentComplete}
     />
   );
 };
@@ -374,7 +399,7 @@ const paymentResultRoute = createRoute({
 const paymentFailedRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/payment/failed",
-  component: () => <PaymentResultPage failed />
+  component: PaymentFailedRoute
 });
 
 const routeTree = rootRoute.addChildren([

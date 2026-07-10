@@ -12,10 +12,10 @@ export interface PaymentMethodOption {
 export const paymentMethods: PaymentMethodOption[] = [
   {
     channel: "wechat",
-    description: "适合微信扫码、公众号或小程序支付。",
-    enabled: true,
+    description: "微信支付正在接入，当前暂不可用。",
+    enabled: false,
     label: "微信支付",
-    tag: "推荐"
+    tag: "待接入"
   },
   {
     channel: "alipay",

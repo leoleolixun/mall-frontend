@@ -2456,12 +2456,6 @@ td {
   gap: 10px;
 }
 
-.payment-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
 .payment-summary-panel h2 {
   margin: 0;
 }
@@ -2561,6 +2555,20 @@ td {
 
 .result-card.failed svg {
   color: #172033;
+}
+
+.result-card.pending svg {
+  color: #d97706;
+}
+
+.result-loading-icon {
+  animation: result-spin 1s linear infinite;
+}
+
+@keyframes result-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .result-card h2,

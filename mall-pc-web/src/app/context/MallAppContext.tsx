@@ -52,7 +52,6 @@ export interface MallAppContextValue {
   setDefaultAddress: (id: number) => Promise<boolean>;
   setGlobalSearch: (value: string) => void;
   setSelectedAddressId: (id: number) => void;
-  simulatePaymentComplete: () => Promise<void>;
   submitOrder: () => Promise<void>;
   updateAddress: (id: number, payload: AddressRequest) => Promise<boolean>;
   updateProfile: (payload: UpdateProfileRequest) => Promise<boolean>;
@@ -436,6 +435,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
       // 本地退出不依赖后端退出结果。
     } finally {
       authApi.storage.clear();
+      paymentApi.pendingStorage.clear();
       setAuth(null);
       setCart([]);
       clearGuestCart();
@@ -572,6 +572,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
         pay_scene: scene
       });
       setCurrentPayment(payment);
+      paymentApi.pendingStorage.write(payment.payment_no);
       setNotice("支付单已创建");
       return payment;
     } catch (error) {
@@ -607,33 +608,6 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
       setNotice(`当前支付状态：${latestPayment.status_text}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "查询支付状态失败");
-    }
-  }, [currentPayment, lastOrder, navigateToPath]);
-
-  const simulatePaymentComplete = useCallback(async (): Promise<void> => {
-    if (!lastOrder) {
-      setNotice("暂无待支付订单");
-      return;
-    }
-    if (!currentPayment) {
-      setNotice("请先创建支付单");
-      return;
-    }
-
-    try {
-      const paidPayment = await paymentApi.mockComplete(currentPayment.payment_no);
-      const paidOrder = {
-        ...lastOrder,
-        status: 2,
-        status_text: "已支付"
-      };
-      setLastOrder(paidOrder);
-      setOrders((current) => current.map((order) => order.id === paidOrder.id ? paidOrder : order));
-      setCurrentPayment(paidPayment);
-      navigateToPath("/payment/result");
-      setNotice("支付成功");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "支付确认失败");
     }
   }, [currentPayment, lastOrder, navigateToPath]);
 
@@ -691,7 +665,6 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     setDefaultAddress,
     setGlobalSearch,
     setSelectedAddressId,
-    simulatePaymentComplete,
     submitOrder,
     updateAddress,
     updateProfile
@@ -728,7 +701,6 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     openOrderPayment,
     openProduct,
     setDefaultAddress,
-    simulatePaymentComplete,
     submitOrder,
     updateAddress,
     updateProfile

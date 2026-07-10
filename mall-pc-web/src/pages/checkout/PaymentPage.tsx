@@ -1,5 +1,5 @@
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CheckCircle2, CreditCard, QrCode, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 
 import { moneyFromCent } from "@/api/client";
@@ -23,11 +23,11 @@ export const PaymentPage: React.FC<{
   onBackCheckout: () => void;
   onCheckPaymentStatus: () => Promise<void>;
   onCreatePayment: (channel: PayChannel, scene?: PayScene) => Promise<PaymentResponse | null>;
-  onMockComplete: () => Promise<void>;
-}> = ({ order, payment, onBackCheckout, onCheckPaymentStatus, onCreatePayment, onMockComplete }) => {
-  const [selectedChannel, setSelectedChannel] = useState<PayChannel>("wechat");
+}> = ({ order, payment, onBackCheckout, onCheckPaymentStatus, onCreatePayment }) => {
+  const [selectedChannel, setSelectedChannel] = useState<PayChannel>("alipay");
   const [creating, setCreating] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const creatingRef = useRef(false);
   const selectedMethod = useMemo(
     () => paymentMethods.find((method) => method.channel === selectedChannel) ?? paymentMethods[0],
     [selectedChannel]
@@ -42,31 +42,44 @@ export const PaymentPage: React.FC<{
   const isAlipayRedirect = payment?.pay_channel === "alipay" && Boolean(payUrl);
 
   const handleCreatePayment = async (): Promise<void> => {
-    if (!selectedMethod.enabled) {
+    if (!selectedMethod.enabled || creatingRef.current) {
       return;
     }
+
+    creatingRef.current = true;
+    // Open the tab in the original click event so browsers do not block the
+    // provider page after the asynchronous payment request completes.
+    const paymentWindow = selectedMethod.scene === "page" ? window.open("about:blank", "_blank") : null;
+    if (paymentWindow) {
+      paymentWindow.opener = null;
+    }
+
     setCreating(true);
-    await onCreatePayment(selectedChannel, selectedMethod.scene);
-    setCreating(false);
+    try {
+      const createdPayment = await onCreatePayment(selectedChannel, selectedMethod.scene);
+      const createdPayUrl = createdPayment?.pay_params?.pay_url;
+
+      if (!createdPayUrl) {
+        paymentWindow?.close();
+        return;
+      }
+
+      if (paymentWindow && !paymentWindow.closed) {
+        paymentWindow.location.replace(createdPayUrl);
+        return;
+      }
+
+      window.location.assign(createdPayUrl);
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
   };
 
   const handlePaymentStatusCheck = async (): Promise<void> => {
     setCompleting(true);
     await onCheckPaymentStatus();
     setCompleting(false);
-  };
-
-  const handleMockComplete = async (): Promise<void> => {
-    setCompleting(true);
-    await onMockComplete();
-    setCompleting(false);
-  };
-
-  const handleOpenPayUrl = (): void => {
-    if (!payUrl) {
-      return;
-    }
-    window.open(payUrl, "_blank", "noopener,noreferrer");
   };
 
   if (!order) {
@@ -92,7 +105,7 @@ export const PaymentPage: React.FC<{
         <section className="panel payment-method-panel">
           <div className="payment-section-title">
             <h2>选择支付方式</h2>
-            <span>后续新增 Stripe 只需扩展支付渠道配置</span>
+            <span>请选择当前可用的支付方式完成付款</span>
           </div>
           <div className="payment-method-grid">
             {paymentMethods.map((method) => (
@@ -113,14 +126,11 @@ export const PaymentPage: React.FC<{
 
           <div className="payment-request-panel">
             <div>
-              <strong>支付请求</strong>
-              <p>
-                点击后会调用后端 `POST /payments` 创建支付单，渠道参数为 `{selectedChannel}`
-                {selectedMethod.scene ? `，支付场景为 ${selectedMethod.scene}` : ""}。
-              </p>
+              <strong>确认支付</strong>
+              <p>点击后将跳转至{selectedMethod.label}收银台，请核对右侧订单金额。</p>
             </div>
             <button className="primary-button solid" disabled={creating || !selectedMethod.enabled} onClick={() => void handleCreatePayment()} type="button">
-              {creating ? "请求中" : `使用${selectedMethod.label}支付`}
+              {creating ? "正在跳转" : "去支付"}
             </button>
           </div>
 
@@ -135,20 +145,11 @@ export const PaymentPage: React.FC<{
                 <p>支付单号：{payment.payment_no}</p>
                 <p>支付场景：{payment.pay_scene}</p>
                 <p>支付状态：{payment.status_text}</p>
-                {isAlipayRedirect ? <p>后端已返回支付宝网页支付链接，请打开支付宝收银台完成付款。</p> : null}
+                {isAlipayRedirect ? <p>支付宝收银台已打开，请在新页面完成付款。</p> : null}
                 {!isAlipayRedirect && qrCodeUrl ? <p>支付参数：{qrCodeUrl}</p> : null}
-                {isAlipayRedirect ? (
-                  <div className="payment-action-row">
-                    <button className="primary-button solid" onClick={handleOpenPayUrl} type="button">打开支付宝付款</button>
-                    <button className="plain-button" disabled={completing} onClick={() => void handlePaymentStatusCheck()} type="button">
-                      {completing ? "查询中" : "我已完成支付，查询状态"}
-                    </button>
-                  </div>
-                ) : (
-                  <button className="plain-button" disabled={completing} onClick={() => void handleMockComplete()} type="button">
-                    {completing ? "确认中" : "模拟已完成支付"}
-                  </button>
-                )}
+                <button className="plain-button" disabled={completing} onClick={() => void handlePaymentStatusCheck()} type="button">
+                  {completing ? "查询中" : isAlipayRedirect ? "我已完成支付，查询状态" : "查询支付状态"}
+                </button>
               </div>
             </section>
           ) : null}
