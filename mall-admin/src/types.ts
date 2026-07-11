@@ -37,6 +37,7 @@ export interface ListPageData {
   metrics: Metric[];
   columns: TableColumn[];
   rows: TableRow[];
+  tableSubtitle?: string;
 }
 
 export interface DashboardPageData {
@@ -67,6 +68,7 @@ export interface FormPageData {
   description: string;
   sections: FormSection[];
   sideCards: string[];
+  fieldValues?: Record<string, string>;
 }
 
 export interface MatrixRole {

@@ -1,5 +1,7 @@
 import { BarChart3, Bell, ChevronDown, ChevronRight, ClipboardList, Headphones, Package, Search, Settings, ShieldCheck, Tags, UserRound, UsersRound, WalletCards } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { buildMerchantRemotePages } from "./api/merchantMappers";
+import { clearMerchantAuth, loadStoredMerchantAuth, merchantApi, merchantApiBaseUrl, storeMerchantAuth, type MerchantUser } from "./api/merchantApi";
 import { adminGroups, adminPages } from "./data/adminPages";
 import type { AdminPageData, BoardPageData, DashboardPageData, DetailPageData, FormPageData, ListPageData, MatrixPageData, TableColumn, TableRow, Tone } from "./types";
 
@@ -108,7 +110,7 @@ const TableView: React.FC<TableViewProps> = ({ title, subtitle = "共 128 条，
 );
 
 const DataTable: React.FC<{ page: ListPageData; onRowAction?: (row: TableRow) => void }> = ({ page, onRowAction }) => (
-  <TableView title={page.title} columns={page.columns} rows={page.rows} onRowAction={onRowAction} />
+  <TableView title={page.title} subtitle={page.tableSubtitle} columns={page.columns} rows={page.rows} onRowAction={onRowAction} />
 );
 
 const ListPage: React.FC<{ page: ListPageData; onRowAction?: (row: TableRow) => void }> = ({ page, onRowAction }) => (
@@ -164,7 +166,9 @@ const DashboardPage: React.FC<{ page: DashboardPageData }> = ({ page }) => (
   </div>
 );
 
-const FormPage: React.FC<{ page: FormPageData; fieldValues?: Record<string, string> }> = ({ page, fieldValues }) => (
+const FormPage: React.FC<{ page: FormPageData; fieldValues?: Record<string, string> }> = ({ page, fieldValues }) => {
+  const values = fieldValues ?? page.fieldValues;
+  return (
   <div className="form-layout">
     <section className="panel form-panel">
       {page.sections.map((section) => (
@@ -176,7 +180,7 @@ const FormPage: React.FC<{ page: FormPageData; fieldValues?: Record<string, stri
             {section.fields.map((field) => (
               <label key={field}>
                 <span>{field}</span>
-                <input defaultValue={fieldValues?.[field] ?? ""} placeholder={`请输入${field}`} />
+                <input key={`${field}-${values?.[field] ?? ""}`} defaultValue={values?.[field] ?? ""} placeholder={`请输入${field}`} />
               </label>
             ))}
           </div>
@@ -201,7 +205,8 @@ const FormPage: React.FC<{ page: FormPageData; fieldValues?: Record<string, stri
       ))}
     </aside>
   </div>
-);
+  );
+};
 
 const MatrixPage: React.FC<{ page: MatrixPageData }> = ({ page }) => (
   <div className="permission-layout">
@@ -359,6 +364,56 @@ const PageContent: React.FC<PageContentProps> = ({ page, productFieldValues, onP
   return <ListPage page={page} onRowAction={onRowAction} />;
 };
 
+interface ApiState {
+  loading: boolean;
+  error: string;
+  connected: boolean;
+}
+
+interface AuthPanelProps {
+  apiState: ApiState;
+  loginForm: { username: string; password: string };
+  merchantUser?: MerchantUser;
+  onLoginFormChange: (field: "username" | "password", value: string) => void;
+  onLogin: (event: React.FormEvent<HTMLFormElement>) => void;
+  onRefresh: () => void;
+  onLogout: () => void;
+}
+
+const AuthPanel: React.FC<AuthPanelProps> = ({ apiState, loginForm, merchantUser, onLoginFormChange, onLogin, onRefresh, onLogout }) => {
+  if (merchantUser) {
+    return (
+      <section className="api-banner connected">
+        <div>
+          <strong>{merchantUser.merchant_name}</strong>
+          <span>{merchantUser.nickname || merchantUser.username} · {merchantUser.role} · {merchantUser.permissions.length} 项权限</span>
+        </div>
+        <div className="api-banner-meta">
+          <span>{apiState.loading ? "同步中" : apiState.connected ? "已连接后端" : "等待同步"} · {merchantApiBaseUrl}</span>
+          {apiState.error ? <em>{apiState.error}</em> : null}
+          <button className="ghost-button compact" type="button" onClick={onRefresh} disabled={apiState.loading}>刷新</button>
+          <button className="ghost-button compact" type="button" onClick={onLogout}>退出</button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <form className="api-banner login" onSubmit={onLogin}>
+      <div>
+        <strong>连接商家后台接口</strong>
+        <span>接口地址：{merchantApiBaseUrl}</span>
+      </div>
+      <div className="api-login-fields">
+        <input value={loginForm.username} onChange={(event) => onLoginFormChange("username", event.target.value)} placeholder="商户账号" />
+        <input value={loginForm.password} onChange={(event) => onLoginFormChange("password", event.target.value)} placeholder="商户密码" type="password" />
+        <button className="primary-button" disabled={apiState.loading} type="submit">{apiState.loading ? "登录中" : "登录并同步"}</button>
+      </div>
+      {apiState.error ? <em>{apiState.error}</em> : null}
+    </form>
+  );
+};
+
 const App: React.FC = () => {
   const getInitialPageId = () => {
     const requested = new URLSearchParams(window.location.search).get("page");
@@ -366,7 +421,12 @@ const App: React.FC = () => {
   };
   const [activePageId, setActivePageId] = useState(getInitialPageId);
   const [selectedProduct, setSelectedProduct] = useState<TableRow | undefined>();
-  const activePage = useMemo(() => adminPages.find((page) => page.id === activePageId) ?? adminPages[0], [activePageId]);
+  const [merchantUser, setMerchantUser] = useState<MerchantUser | undefined>();
+  const [remotePages, setRemotePages] = useState<Partial<Record<string, AdminPageData>>>({});
+  const [loginForm, setLoginForm] = useState({ username: "merchant_admin", password: "" });
+  const [apiState, setApiState] = useState<ApiState>({ loading: false, error: "", connected: false });
+  const pages = useMemo(() => adminPages.map((page) => remotePages[page.id] ?? page), [remotePages]);
+  const activePage = useMemo(() => pages.find((page) => page.id === activePageId) ?? pages[0], [activePageId, pages]);
   const activeGroup = useMemo(() => adminGroups.find((group) => group.id === activePage.groupId) ?? adminGroups[0], [activePage.groupId]);
   const productFieldValues = useMemo(() => selectedProduct ? {
     "商品名称": selectedProduct.cells.name,
@@ -401,6 +461,66 @@ const App: React.FC = () => {
   const openTicketDetail = () => navigateToPage("ticket-detail");
   const openReconciliation = () => navigateToPage("reconciliation");
 
+  const loadMerchantData = async () => {
+    setApiState((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const [user, overview, analytics, products, categories, orders, inventoryAlerts] = await Promise.all([
+        merchantApi.me(),
+        merchantApi.dashboardOverview(),
+        merchantApi.dashboardAnalytics(10, 10),
+        merchantApi.products({ page: 1, pageSize: 20 }),
+        merchantApi.categories(),
+        merchantApi.orders({ page: 1, pageSize: 20 }),
+        merchantApi.inventoryAlerts({ page: 1, pageSize: 20 })
+      ]);
+      setMerchantUser(user);
+      setRemotePages(buildMerchantRemotePages(adminPages, { user, overview, analytics, products, categories, orders, inventoryAlerts }));
+      setApiState({ loading: false, error: "", connected: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "接口同步失败";
+      setApiState({ loading: false, error: message, connected: false });
+      if (message.includes("未登录") || message.includes("401") || message.includes("token")) {
+        clearMerchantAuth();
+        setMerchantUser(undefined);
+        setRemotePages({});
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!loadStoredMerchantAuth()) return;
+    void loadMerchantData();
+  }, []);
+
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setApiState({ loading: true, error: "", connected: false });
+    try {
+      const auth = await merchantApi.login(loginForm.username.trim(), loginForm.password);
+      storeMerchantAuth(auth);
+      setMerchantUser(auth.user);
+      await loadMerchantData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "登录失败";
+      setApiState({ loading: false, error: message, connected: false });
+    }
+  };
+
+  const handleLogout = async () => {
+    const storedAuth = loadStoredMerchantAuth();
+    if (storedAuth) {
+      try {
+        await merchantApi.logout(storedAuth.refreshToken);
+      } catch {
+        // Local state is cleared even when the remote refresh token has already expired.
+      }
+    }
+    clearMerchantAuth();
+    setMerchantUser(undefined);
+    setRemotePages({});
+    setApiState({ loading: false, error: "", connected: false });
+  };
+
   return (
     <div className="admin-shell">
       <aside className="sidebar">
@@ -416,7 +536,7 @@ const App: React.FC = () => {
             const group = adminGroups.find((item) => item.id === module.id);
             const active = module.id === activeGroup.id;
             const childPages = group?.pageIds
-              .map((pageId) => adminPages.find((page) => page.id === pageId))
+              .map((pageId) => pages.find((page) => page.id === pageId))
               .filter((page): page is AdminPageData => Boolean(page)) ?? [];
             return (
               <section className="module-section" key={module.id}>
@@ -470,8 +590,8 @@ const App: React.FC = () => {
           })}
         </nav>
         <div className="merchant-card">
-          <strong>默认商户</strong>
-          <span>旗舰店 · 已认证</span>
+          <strong>{merchantUser?.merchant_name ?? "默认商户"}</strong>
+          <span>{merchantUser ? `${merchantUser.role} · 已认证` : "旗舰店 · 已认证"}</span>
         </div>
       </aside>
       <main>
@@ -484,7 +604,7 @@ const App: React.FC = () => {
           <button className="icon-button"><Bell size={18} /></button>
           <div className="user-chip">
             <UserRound size={18} />
-            <span>管理员</span>
+            <span>{merchantUser?.nickname || merchantUser?.username || "管理员"}</span>
           </div>
         </header>
         <section className="page-head">
@@ -494,6 +614,15 @@ const App: React.FC = () => {
             <p>{pageDescription}</p>
           </div>
         </section>
+        <AuthPanel
+          apiState={apiState}
+          loginForm={loginForm}
+          merchantUser={merchantUser}
+          onLoginFormChange={(field, value) => setLoginForm((current) => ({ ...current, [field]: value }))}
+          onLogin={handleLogin}
+          onRefresh={loadMerchantData}
+          onLogout={handleLogout}
+        />
         <PageContent
           page={activePage}
           productFieldValues={productFieldValues}
