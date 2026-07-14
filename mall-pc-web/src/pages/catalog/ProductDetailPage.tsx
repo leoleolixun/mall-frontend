@@ -1,6 +1,6 @@
 import type React from "react";
 import { useEffect, useState } from "react";
-import { Heart, ShoppingCart } from "lucide-react";
+import { Heart, MessageSquare, PackageCheck, RotateCcw, ShieldCheck, ShoppingCart, Truck } from "lucide-react";
 import { moneyFromCent } from "@/api/client";
 import type { ProductDetailResponse } from "@/api/client";
 import type { Product } from "@/shared/types/domain";
@@ -9,18 +9,28 @@ import { HeroTitle } from "@/shared/components/HeroTitle";
 import { ProductVisual } from "@/shared/components/ProductVisual";
 import { formatPrice } from "@/shared/utils/money";
 
+type DetailTabKey = "details" | "specifications" | "reviews" | "service";
+
+const detailTabs: Array<{ key: DetailTabKey; label: string }> = [
+  { key: "details", label: "商品详情" },
+  { key: "specifications", label: "规格参数" },
+  { key: "reviews", label: "用户评价" },
+  { key: "service", label: "售后保障" }
+];
+
 export const ProductDetailPage: React.FC<{
   product: Product;
   detail?: ProductDetailResponse | null;
   onAdd: (product: Product, quantity?: number) => void;
   onBuy: () => void;
-  onReviews: () => void;
-}> = ({ product, detail, onAdd, onBuy, onReviews }) => {
+}> = ({ product, detail, onAdd, onBuy }) => {
   const [color, setColor] = useState("曜石黑");
   const [selectedSkuId, setSelectedSkuId] = useState<number | undefined>(detail?.skus?.[0]?.id ?? product.skuId);
   const [quantity, setQuantity] = useState(1);
+  const [activeTab, setActiveTab] = useState<DetailTabKey>("details");
   const skus = detail?.skus ?? [];
   const selectedSku = skus.find((sku) => sku.id === selectedSkuId) ?? skus[0];
+  const productDescription = detail?.description || product.description || `${product.name}，具体信息以页面展示和实际商品为准。`;
   const displayProduct: Product = {
     ...product,
     skuId: selectedSku?.id ?? product.skuId,
@@ -30,6 +40,10 @@ export const ProductDetailPage: React.FC<{
   useEffect(() => {
     setSelectedSkuId(detail?.skus?.[0]?.id ?? product.skuId);
   }, [detail, product.skuId]);
+
+  useEffect(() => {
+    setActiveTab("details");
+  }, [product.id]);
 
   return (
     <>
@@ -44,7 +58,7 @@ export const ProductDetailPage: React.FC<{
       <section className="panel purchase-panel">
         <span className="badge">30 天无忧退换</span>
         <h2>{product.name}</h2>
-        <p>{detail?.description || product.description || "商品详情来自后端接口，可继续补充图文详情、参数表、评价摘要和售后政策。"}</p>
+        <p>{productDescription}</p>
         <div className="price-band">
           <span>商城价</span>
           <strong>{formatPrice(displayProduct.price)}</strong>
@@ -74,14 +88,83 @@ export const ProductDetailPage: React.FC<{
       </section>
     </div>
     <section className="panel detail-tabs">
-      <div className="chip-row">
-        {["商品详情", "规格参数", "用户评价", "售后保障"].map((item, index) => (
-          <Chip active={index === 0} key={item} onClick={item === "用户评价" ? onReviews : undefined}>{item}</Chip>
+      <div aria-label="商品信息" className="chip-row" role="tablist">
+        {detailTabs.map((tab) => (
+          <button
+            aria-controls={`product-${tab.key}-panel`}
+            aria-selected={activeTab === tab.key}
+            className={activeTab === tab.key ? "chip active" : "chip"}
+            id={`product-${tab.key}-tab`}
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            role="tab"
+            type="button"
+          >
+            {tab.label}
+          </button>
         ))}
       </div>
-      <div className="detail-copy">
-        <h2>核心卖点</h2>
-        <p>{detail?.description || "页面区域预留用于承载图文详情、参数表、评价摘要和售后政策。"}</p>
+      <div
+        aria-labelledby={`product-${activeTab}-tab`}
+        className="detail-tab-panel"
+        id={`product-${activeTab}-panel`}
+        role="tabpanel"
+      >
+        {activeTab === "details" ? (
+          <div className="detail-copy">
+            <h2>商品介绍</h2>
+            <p>{productDescription}</p>
+            <div className="detail-facts">
+              <div><span>商品名称</span><strong>{product.name}</strong></div>
+              <div><span>品牌</span><strong>{product.brand}</strong></div>
+              <div><span>分类</span><strong>{product.category}</strong></div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === "specifications" ? (
+          <div className="detail-copy">
+            <h2>规格参数</h2>
+            <div className="detail-parameter-list">
+              <div><span>商品编号</span><strong>{detail?.id ?? product.apiId ?? product.id}</strong></div>
+              <div><span>品牌</span><strong>{product.brand}</strong></div>
+              <div><span>商品分类</span><strong>{product.category}</strong></div>
+            </div>
+            <h3>可选规格</h3>
+            {skus.length > 0 ? (
+              <div className="detail-sku-table">
+                <div className="detail-sku-header"><span>规格名称</span><span>价格</span><span>库存</span></div>
+                {skus.map((sku) => (
+                  <div className="detail-sku-row" key={sku.id}>
+                    <strong>{sku.name}</strong>
+                    <span>{formatPrice(moneyFromCent(sku.price))}</span>
+                    <span>{sku.stock}</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p>暂无可展示的规格参数。</p>}
+          </div>
+        ) : null}
+
+        {activeTab === "reviews" ? (
+          <div className="detail-review-empty">
+            <MessageSquare size={44} />
+            <h2>暂无用户评价</h2>
+            <p>当前商品暂无可展示的评价，购买完成后可在订单中心发表评价。</p>
+          </div>
+        ) : null}
+
+        {activeTab === "service" ? (
+          <div className="detail-copy">
+            <h2>售后保障</h2>
+            <div className="detail-service-list">
+              <div><RotateCcw size={22} /><strong>无忧退换</strong><span>符合退换条件的商品可按商城规则申请售后。</span></div>
+              <div><ShieldCheck size={22} /><strong>质量保障</strong><span>如遇商品质量问题，可提交凭证申请处理。</span></div>
+              <div><Truck size={22} /><strong>物流跟踪</strong><span>订单发货后可在订单详情中查看物流进度。</span></div>
+              <div><PackageCheck size={22} /><strong>售后进度</strong><span>售后申请和处理结果可在个人中心持续跟踪。</span></div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
     </>
@@ -98,4 +181,3 @@ export const SpecSelector: React.FC<{ title: string; options: string[]; value?: 
 );
 
 export default ProductDetailPage;
-

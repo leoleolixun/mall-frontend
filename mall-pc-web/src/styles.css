@@ -826,16 +826,145 @@ input::placeholder {
   margin-top: 24px;
 }
 
-.detail-copy {
+.detail-tabs [role="tab"] {
+  min-width: 112px;
+}
+
+.detail-tab-panel {
+  min-height: 260px;
   margin-top: 28px;
+}
+
+.detail-copy {
   border-radius: 8px;
   padding: 24px;
   background: #f8fafc;
 }
 
+.detail-copy h2,
+.detail-copy h3,
+.detail-review-empty h2,
+.detail-review-empty p {
+  margin: 0;
+}
+
+.detail-copy h3 {
+  margin-top: 24px;
+  font-size: 16px;
+}
+
 .detail-copy p {
   margin: 0;
   color: #687386;
+}
+
+.detail-copy > h2 + p {
+  margin-top: 12px;
+  line-height: 1.8;
+}
+
+.detail-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 24px;
+  border-top: 1px solid #e4e7ec;
+}
+
+.detail-facts > div {
+  display: grid;
+  gap: 8px;
+  padding: 20px 18px 0 0;
+}
+
+.detail-facts span,
+.detail-parameter-list span,
+.detail-sku-header,
+.detail-sku-row span,
+.detail-service-list span {
+  color: #687386;
+}
+
+.detail-parameter-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin-top: 18px;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  background: #e4e7ec;
+}
+
+.detail-parameter-list > div {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.detail-sku-table {
+  overflow: hidden;
+  margin-top: 12px;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.detail-sku-header,
+.detail-sku-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(120px, 0.7fr) minmax(90px, 0.5fr);
+  gap: 16px;
+  align-items: center;
+  padding: 13px 16px;
+}
+
+.detail-sku-header {
+  background: #f1f4f8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detail-sku-row + .detail-sku-row {
+  border-top: 1px solid #e4e7ec;
+}
+
+.detail-review-empty {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  border-radius: 8px;
+  color: #687386;
+  background: #f8fafc;
+  text-align: center;
+}
+
+.detail-review-empty svg {
+  color: #e5484d;
+}
+
+.detail-review-empty h2 {
+  color: #172033;
+}
+
+.detail-service-list {
+  display: grid;
+  margin-top: 16px;
+}
+
+.detail-service-list > div {
+  display: grid;
+  grid-template-columns: 32px 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  border-top: 1px solid #e4e7ec;
+}
+
+.detail-service-list svg {
+  color: #e5484d;
 }
 
 .review-summary {

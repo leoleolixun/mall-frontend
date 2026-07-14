@@ -46,7 +46,6 @@ export interface MallAppContextValue {
   handleRegister: (username: string, password: string, nickname: string) => Promise<void>;
   navigateProtected: (to: string) => void;
   navigateToPage: (page: PageKey) => void;
-  openCurrentProductReviews: () => void;
   openOrderPayment: (order: OrderResponse) => void;
   openProduct: (product: Product) => void;
   setDefaultAddress: (id: number) => Promise<boolean>;
@@ -389,11 +388,6 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     navigateToPath(routeByPage[page] ?? "/");
   }, [navigateToPath, openProduct, selectedProduct]);
 
-  const openCurrentProductReviews = useCallback((): void => {
-    const productId = String(selectedProduct.apiId ?? selectedProduct.id);
-    navigateToPath(`/products/${productId}/reviews`);
-  }, [navigateToPath, selectedProduct]);
-
   const handleLogin = useCallback(async (username: string, password: string): Promise<void> => {
     try {
       const result = await authApi.login({ username, password });
@@ -659,7 +653,6 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     handleRegister,
     navigateProtected,
     navigateToPage,
-    openCurrentProductReviews,
     openOrderPayment,
     openProduct,
     setDefaultAddress,
@@ -697,7 +690,6 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     handleRegister,
     navigateProtected,
     navigateToPage,
-    openCurrentProductReviews,
     openOrderPayment,
     openProduct,
     setDefaultAddress,

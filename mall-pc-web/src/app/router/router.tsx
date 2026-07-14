@@ -48,7 +48,7 @@ const ProductListRoute: React.FC = () => {
 
 const ProductDetailRoute: React.FC = () => {
   const { productId } = useParams({ strict: false }) as { productId: string };
-  const { addToCart, ensureProductForRoute, navigateProtected, openCurrentProductReviews, productDetail, selectedProduct } = useMallApp();
+  const { addToCart, ensureProductForRoute, navigateProtected, productDetail, selectedProduct } = useMallApp();
 
   useEffect(() => {
     ensureProductForRoute(productId);
@@ -60,7 +60,6 @@ const ProductDetailRoute: React.FC = () => {
       detail={productDetail}
       onAdd={addToCart}
       onBuy={() => navigateProtected("/checkout")}
-      onReviews={openCurrentProductReviews}
     />
   );
 };
