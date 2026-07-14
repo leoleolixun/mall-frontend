@@ -73,7 +73,7 @@ const afterSaleColumns: TableColumn[] = [
 
 const employeeColumns: TableColumn[] = [
   { key: "name", label: "员工" },
-  { key: "phone", label: "手机号" },
+  { key: "phone", label: "登录账号" },
   { key: "role", label: "角色" },
   { key: "lastLogin", label: "最近登录" },
   { key: "status", label: "状态" },
@@ -92,7 +92,7 @@ const roleColumns: TableColumn[] = [
 const userColumns: TableColumn[] = [
   { key: "name", label: "用户" },
   { key: "phone", label: "手机号" },
-  { key: "level", label: "会员等级" },
+  { key: "level", label: "顾客类型" },
   { key: "orders", label: "订单数" },
   { key: "amount", label: "消费金额" },
   { key: "action", label: "操作" }
@@ -743,7 +743,7 @@ export const adminPages: AdminPageData[] = [
     title: "员工管理",
     eyebrow: "商户权限 / 员工管理",
     description: "管理商户后台员工账号、角色、启停状态和最近登录记录。",
-    filters: ["员工姓名", "手机号", "角色", "账号状态"],
+    filters: ["员工姓名 / 登录账号", "角色", "账号状态"],
     actions: [{ label: "新增员工", variant: "primary" }, { label: "批量停用" }],
     metrics: [
       { label: "员工账号", value: "18", delta: "+2", tone: "blue" },

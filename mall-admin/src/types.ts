@@ -114,6 +114,7 @@ export interface DetailPageData {
   tableTitle: string;
   columns: TableColumn[];
   rows: TableRow[];
+  actions?: PageAction[];
 }
 
 export type AdminPageData = DashboardPageData | ListPageData | FormPageData | MatrixPageData | BoardPageData | DetailPageData;

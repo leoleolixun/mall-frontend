@@ -1,14 +1,21 @@
 import type {
   MerchantCategory,
+  MerchantAccount,
+  MerchantCustomer,
+  MerchantCustomerDetail,
+  MerchantCustomerOverview,
   MerchantDashboardAnalytics,
   MerchantDashboardOverview,
   MerchantInventoryAlert,
+  MerchantAfterSale,
+  MerchantCoupon,
   MerchantOrder,
   MerchantProduct,
+  MerchantRole,
   MerchantUser,
   PageResponse
 } from "./merchantApi";
-import type { AdminPageData, DashboardPageData, FormPageData, ListPageData, Metric, TableRow } from "../types";
+import type { AdminPageData, DashboardPageData, DetailPageData, FormPageData, ListPageData, MatrixPageData, Metric, TableRow } from "../types";
 
 const currency = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -69,6 +76,36 @@ const cloneFormPage = (pages: AdminPageData[], id: string): FormPageData => {
   return page;
 };
 
+const cloneMatrixPage = (pages: AdminPageData[], id: string): MatrixPageData => {
+  const page = pages.find((item): item is MatrixPageData => item.id === id && item.kind === "matrix");
+  if (!page) throw new Error(`未找到矩阵页面：${id}`);
+  return page;
+};
+
+const cloneDetailPage = (pages: AdminPageData[], id: string): DetailPageData => {
+  const page = pages.find((item): item is DetailPageData => item.id === id && item.kind === "detail");
+  if (!page) throw new Error(`未找到详情页面：${id}`);
+  return page;
+};
+
+const permissionLabel: Record<string, string> = {
+  "dashboard:read": "工作台查看",
+  "order:read": "订单查看",
+  "order:ship": "订单发货",
+  "catalog:read": "商品查看",
+  "catalog:write": "商品编辑",
+  "inventory:read": "库存查看",
+  "inventory:write": "库存调整",
+  "upload:write": "图片上传",
+  "account:read": "员工查看",
+  "account:write": "员工管理",
+  "customer:read": "顾客查看",
+  "after_sale:read": "售后查看",
+  "after_sale:write": "售后审核退款",
+  "marketing:read": "营销查看",
+  "marketing:write": "营销管理"
+};
+
 const mapOrderRow = (order: MerchantOrder): TableRow => ({
   id: String(order.id),
   cells: {
@@ -92,8 +129,15 @@ export const buildMerchantRemotePages = (
     categories: MerchantCategory[];
     orders: PageResponse<MerchantOrder>;
     inventoryAlerts: PageResponse<MerchantInventoryAlert>;
+    accounts?: PageResponse<MerchantAccount>;
+    roles?: MerchantRole[];
+    customerOverview?: MerchantCustomerOverview;
+    customers?: PageResponse<MerchantCustomer>;
+    afterSales?: PageResponse<MerchantAfterSale>;
+    coupons?: PageResponse<MerchantCoupon>;
   }
 ): Partial<Record<string, AdminPageData>> => {
+	const can = (permission: string) => input.user.permissions.includes(permission);
   const categoriesById = new Map(input.categories.map((item) => [item.id, item.name]));
   const productStocks = input.products.list.map((product) => product.skus.reduce((sum, sku) => sum + sku.stock, 0));
   const lowStockCount = input.inventoryAlerts.total;
@@ -133,6 +177,7 @@ export const buildMerchantRemotePages = (
   const products = cloneListPage(staticPages, "products");
   const productPage: ListPageData = {
     ...products,
+	actions: can("catalog:write") ? products.actions : [],
     tableSubtitle: tableSubtitle(input.products),
     metrics: [
       { label: "商品总数", value: number.format(input.overview.total_products), delta: "接口同步", tone: "blue" },
@@ -151,7 +196,7 @@ export const buildMerchantRemotePages = (
           price: firstSku ? formatMoney(firstSku.price) : "-",
           stock: number.format(stock),
           status: productStatus(product.status),
-          action: "编辑"
+          action: can("catalog:write") ? "编辑" : "-"
         },
         status: productStatus(product.status)
       };
@@ -161,6 +206,7 @@ export const buildMerchantRemotePages = (
   const categories = cloneListPage(staticPages, "categories");
   const categoryPage: ListPageData = {
     ...categories,
+	actions: can("catalog:write") ? categories.actions : [],
     tableSubtitle: `共 ${number.format(input.categories.length)} 条`,
     metrics: [
       { label: "分类总数", value: number.format(input.categories.length), delta: "接口同步", tone: "blue" },
@@ -176,7 +222,7 @@ export const buildMerchantRemotePages = (
         amount: `排序 ${category.sort}`,
         status: categoryStatus(category.status),
         time: `商户 ${category.merchant_id}`,
-        action: "编辑"
+        action: can("catalog:write") ? "编辑" : "-"
       },
       status: categoryStatus(category.status)
     }))
@@ -198,6 +244,7 @@ export const buildMerchantRemotePages = (
   const inventory = cloneListPage(staticPages, "inventory");
   const inventoryPage: ListPageData = {
     ...inventory,
+	actions: can("inventory:write") ? inventory.actions : [],
     tableSubtitle: tableSubtitle(input.inventoryAlerts),
     metrics: [
       { label: "预警 SKU", value: number.format(input.inventoryAlerts.total), delta: "接口同步", tone: "orange" },
@@ -213,7 +260,7 @@ export const buildMerchantRemotePages = (
         amount: `${number.format(alert.stock)} / 预警线 ${number.format(alert.low_stock_threshold)}`,
         status: alertSeverity(alert.severity),
         time: formatTime(alert.updated_at),
-        action: "补货"
+        action: can("inventory:write") ? "补货" : "-"
       },
       status: alertSeverity(alert.severity)
     }))
@@ -234,12 +281,207 @@ export const buildMerchantRemotePages = (
     }
   };
 
+  let employeePage: ListPageData | undefined;
+  let rolePage: ListPageData | undefined;
+  let permissionMatrixPage: MatrixPageData | undefined;
+  let customerPage: ListPageData | undefined;
+  let afterSalePage: ListPageData | undefined;
+  let couponPage: ListPageData | undefined;
+  if (input.accounts && input.roles) {
+    const employees = cloneListPage(staticPages, "employees");
+    const enabledAccounts = input.accounts.list.filter((account) => account.status === 1).length;
+    employeePage = {
+      ...employees,
+      tableSubtitle: tableSubtitle(input.accounts),
+      actions: can("account:write") ? [{ label: "新增员工", variant: "primary" }] : [],
+      metrics: [
+        { label: "员工账号", value: number.format(input.accounts.total), delta: "接口同步", tone: "blue" },
+        { label: "启用账号", value: number.format(enabledAccounts), delta: "可登录", tone: "green" },
+        { label: "停用账号", value: number.format(input.accounts.list.length - enabledAccounts), delta: "不可登录", tone: "gray" },
+        { label: "角色数量", value: number.format(input.roles.length), delta: "固定 RBAC", tone: "purple" }
+      ],
+      rows: input.accounts.list.map((account) => ({
+        id: String(account.id),
+        cells: {
+          name: account.nickname,
+          phone: account.username,
+          role: account.role_name,
+          lastLogin: formatTime(account.last_login_at),
+          status: account.status === 1 ? "启用" : "停用",
+          action: can("account:write") ? "编辑" : "-"
+        },
+        status: account.status === 1 ? "启用" : "停用"
+      }))
+    };
+
+    const roles = cloneListPage(staticPages, "roles");
+    rolePage = {
+      ...roles,
+      description: "查看系统固定岗位角色、成员数量和实际接口权限。",
+      actions: [],
+      tableSubtitle: `共 ${number.format(input.roles.length)} 个固定角色`,
+      metrics: [
+        { label: "固定角色", value: number.format(input.roles.length), delta: "RBAC", tone: "blue" },
+        { label: "授权成员", value: number.format(input.roles.reduce((sum, role) => sum + role.member_count, 0)), delta: "当前商户", tone: "green" },
+        { label: "高权限角色", value: "2", delta: "店主 / 管理员", tone: "orange" },
+        { label: "权限项", value: number.format(Object.keys(permissionLabel).length), delta: "接口权限", tone: "purple" }
+      ],
+      rows: input.roles.map((role) => ({
+        id: role.role,
+        cells: {
+          role: role.name,
+          members: number.format(role.member_count),
+          scope: `${role.permissions.length} 项接口权限`,
+          createdAt: "系统内置",
+          status: "启用",
+          action: "查看"
+        },
+        status: "启用"
+      }))
+    };
+
+    const matrix = cloneMatrixPage(staticPages, "permission-matrix");
+    permissionMatrixPage = {
+      ...matrix,
+      description: "查看固定岗位角色对应的真实接口权限，权限变更需由后端版本发布。",
+      modules: Object.values(permissionLabel),
+      roles: input.roles.map((role) => ({
+        role: role.name,
+        permissions: role.permissions.map((permission) => permissionLabel[permission] ?? permission)
+      }))
+    };
+  }
+
+  if (input.customerOverview && input.customers) {
+    const customers = cloneListPage(staticPages, "user-list");
+    customerPage = {
+      ...customers,
+      description: "查看在当前商户完成过支付的顾客、复购情况和累计成交金额。",
+      filters: ["昵称 / 手机号", "仅看复购顾客"],
+      actions: [],
+      tableSubtitle: tableSubtitle(input.customers),
+      metrics: [
+        { label: "成交顾客", value: number.format(input.customerOverview.total_customers), delta: "累计", tone: "blue" },
+        { label: "30 天新客", value: number.format(input.customerOverview.new_customers_30d), delta: "首次成交", tone: "green" },
+        { label: "复购顾客", value: number.format(input.customerOverview.repeat_customers), delta: `${(input.customerOverview.repeat_rate_bps / 100).toFixed(2)}%`, tone: "purple" },
+        { label: "30 天活跃", value: number.format(input.customerOverview.active_customers_30d), delta: "最近成交", tone: "orange" }
+      ],
+      rows: input.customers.list.map((customer) => ({
+        id: String(customer.user_id),
+        cells: {
+          name: customer.nickname,
+          phone: customer.mobile_masked || "-",
+          level: customer.is_repeat ? "复购顾客" : "首购顾客",
+          orders: number.format(customer.paid_orders),
+          amount: formatMoney(customer.total_paid_amount),
+          action: "详情"
+        }
+      }))
+    };
+  }
+
+  if (input.afterSales) {
+    const page = cloneListPage(staticPages, "aftersale-list");
+    const pending = input.afterSales.list.filter((item) => item.status === 1).length;
+    const failed = input.afterSales.list.filter((item) => item.status === 6).length;
+    afterSalePage = {
+      ...page,
+      description: "审核当前商户的真实售后申请并跟踪原路退款结果。",
+      actions: [],
+      tableSubtitle: tableSubtitle(input.afterSales),
+      metrics: [
+        { label: "售后申请", value: number.format(input.afterSales.total), delta: "当前商户", tone: "blue" },
+        { label: "待审核", value: number.format(pending), delta: "需处理", tone: "orange" },
+        { label: "退款失败", value: number.format(failed), delta: "可重试", tone: "red" },
+        { label: "本页退款", value: formatMoney(input.afterSales.list.filter((item) => item.status === 3).reduce((sum, item) => sum + item.refund_amount, 0)), delta: "已完成", tone: "green" }
+      ],
+      rows: input.afterSales.list.map((item) => ({
+        id: String(item.id),
+        cells: { name: item.after_sale_no, owner: `${item.product_name} · ${item.sku_name}`, amount: formatMoney(item.refund_amount), status: item.status_text, time: formatTime(item.created_at), action: can("after_sale:write") ? "处理" : "-" },
+        status: item.status_text
+      }))
+    };
+  }
+
+  if (input.coupons) {
+    const page = cloneListPage(staticPages, "coupon-management");
+    couponPage = {
+      ...page,
+      description: "创建和维护当前商户优惠券，跟踪领取与核销数量。",
+      actions: can("marketing:write") ? [{ label: "新增优惠券", variant: "primary" }] : [],
+      tableSubtitle: tableSubtitle(input.coupons),
+      metrics: [
+        { label: "优惠券", value: number.format(input.coupons.total), delta: "当前商户", tone: "blue" },
+        { label: "发放中", value: number.format(input.coupons.list.filter((item) => item.status === 1).length), delta: "可领取", tone: "green" },
+        { label: "已领取", value: number.format(input.coupons.list.reduce((sum, item) => sum + item.claimed_quantity, 0)), delta: "本页", tone: "orange" },
+        { label: "已核销", value: number.format(input.coupons.list.reduce((sum, item) => sum + item.used_quantity, 0)), delta: "本页", tone: "purple" }
+      ],
+      rows: input.coupons.list.map((item) => ({ id: String(item.id), cells: { name: item.name, owner: `满 ${formatMoney(item.threshold_amount)}`, amount: `减 ${formatMoney(item.discount_amount)}`, status: item.status_text, time: `${item.claimed_quantity}/${item.total_quantity}`, action: can("marketing:write") ? "编辑" : "-" }, status: item.status_text }))
+    };
+  }
+
   return {
     "dashboard-overview": dashboardPage,
     products: productPage,
     categories: categoryPage,
     inventory: inventoryPage,
     "order-list": orderPage,
-    "merchant-info": merchantInfoPage
+  "merchant-info": merchantInfoPage,
+  ...(employeePage ? { employees: employeePage } : {}),
+  ...(rolePage ? { roles: rolePage } : {}),
+    ...(permissionMatrixPage ? { "permission-matrix": permissionMatrixPage } : {}),
+    ...(customerPage ? { "user-list": customerPage } : {}),
+    ...(afterSalePage ? { "aftersale-list": afterSalePage } : {}),
+    ...(couponPage ? { "coupon-management": couponPage } : {})
+  };
+};
+
+export const buildMerchantOrderDetailPage = (staticPages: AdminPageData[], order: MerchantOrder, canShip = false): DetailPageData => {
+  const page = cloneDetailPage(staticPages, "order-detail");
+  return {
+    ...page,
+    description: "查看真实订单金额、收件信息、商品明细和发货记录。",
+    summary: [
+      { label: "订单状态", value: order.status_text },
+      { label: "订单金额", value: formatMoney(order.payable_amount) },
+      { label: "收货人", value: `${order.receiver_name} ${order.receiver_phone}` },
+      { label: "收货地址", value: order.receiver_address }
+    ],
+    steps: ["买家下单", order.paid_at ? "买家支付" : "等待支付", order.shipment ? "商家发货" : "等待发货", order.completed_at ? "确认收货" : "等待收货"],
+    tableTitle: "商品明细",
+    rows: order.items.map((item) => ({ id: String(item.id), cells: { time: item.sku_name, operator: item.product_name, action: `${item.quantity} 件`, content: formatMoney(item.price), result: formatMoney(item.subtotal) }, status: "成功" })),
+    actions: canShip && order.status === 2 ? [{ label: "填写物流并发货", variant: "primary" }] : []
+  };
+};
+
+export const buildMerchantCustomerDetailPage = (
+  staticPages: AdminPageData[],
+  detail: MerchantCustomerDetail
+): DetailPageData => {
+  const page = cloneDetailPage(staticPages, "user-detail");
+  const customer = detail.customer;
+  return {
+    ...page,
+    description: "查看当前商户内的顾客成交概况与最近订单，不包含其他商户数据。",
+    summary: [
+      { label: "顾客", value: customer.nickname },
+      { label: "手机号", value: customer.mobile_masked || "-" },
+      { label: "成交订单", value: `${number.format(customer.paid_orders)} 单` },
+      { label: "累计成交", value: formatMoney(customer.total_paid_amount) }
+    ],
+    steps: ["注册账号", "首次成交", customer.is_repeat ? "产生复购" : "等待复购", "最近成交"],
+    tableTitle: "当前商户最近订单",
+    rows: detail.recent_orders.map((order) => ({
+      id: String(order.id),
+      cells: {
+        orderNo: order.order_no,
+        buyer: customer.nickname,
+        amount: formatMoney(order.payable_amount),
+        status: order.status_text,
+        time: formatTime(order.created_at),
+        action: "查看"
+      },
+      status: order.status_text
+    }))
   };
 };
