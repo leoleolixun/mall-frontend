@@ -39,6 +39,27 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: npm run typecheck
 
+      - name: Unit tests
+        working-directory: ${{ env.APP_DIR }}
+        run: npm test
+
+      - name: Install Playwright browser
+        working-directory: ${{ env.APP_DIR }}
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser acceptance tests
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run test:e2e
+
+      - name: Upload browser traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mall-pc-web-playwright-${{ github.sha }}
+          path: ${{ env.APP_DIR }}/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Build
         working-directory: ${{ env.APP_DIR }}
         run: npm run build
@@ -72,9 +93,41 @@ jobs:
             SUDO="sudo"
           fi
 
-          $SUDO mkdir -p "${{ env.DEPLOY_DIR }}/dist"
-          $SUDO find "${{ env.DEPLOY_DIR }}/dist" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-          $SUDO tar -xzf /tmp/mall-pc-web.tar.gz -C "${{ env.DEPLOY_DIR }}/dist"
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+          RELEASES_DIR="$DEPLOY_DIR/releases"
+          RELEASE_DIR="$RELEASES_DIR/${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          $SUDO mkdir -p "$RELEASES_DIR"
+          if [ -d "$DEPLOY_DIR/dist" ] && [ ! -L "$DEPLOY_DIR/dist" ]; then
+            LEGACY_DIR="$RELEASES_DIR/legacy-$(date +%Y%m%d%H%M%S)"
+            $SUDO mv "$DEPLOY_DIR/dist" "$LEGACY_DIR"
+            $SUDO ln -s "$LEGACY_DIR" "$DEPLOY_DIR/dist"
+          fi
+          PREVIOUS_RELEASE="$($SUDO readlink -f "$DEPLOY_DIR/dist" 2>/dev/null || true)"
+          $SUDO rm -rf "$RELEASE_DIR"
+          $SUDO mkdir -p "$RELEASE_DIR"
+          $SUDO tar -xzf /tmp/mall-pc-web.tar.gz -C "$RELEASE_DIR"
+          test -f "$RELEASE_DIR/index.html"
+
+          rollback() {
+            status=$?
+            trap - ERR
+            if [ "$status" -ne 0 ] && [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
+              echo "PC Web deployment failed, restoring $PREVIOUS_RELEASE"
+              $SUDO ln -sfn "$PREVIOUS_RELEASE" "$DEPLOY_DIR/dist.rollback"
+              $SUDO mv -Tf "$DEPLOY_DIR/dist.rollback" "$DEPLOY_DIR/dist"
+              $SUDO systemctl reload nginx || true
+            fi
+            $SUDO rm -rf "$RELEASE_DIR"
+            exit "$status"
+          }
+          trap rollback ERR
+
+          $SUDO ln -sfn "$RELEASE_DIR" "$DEPLOY_DIR/dist.next"
+          $SUDO mv -Tf "$DEPLOY_DIR/dist.next" "$DEPLOY_DIR/dist"
           $SUDO nginx -t
           $SUDO systemctl reload nginx
+          curl -kfsS https://127.0.0.1/ -H 'Host: mall.leedu.ac.cn' | grep -q '<div id="root">'
+          trap - ERR
+          $SUDO find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r $SUDO rm -rf
+          rm -f /tmp/mall-pc-web.tar.gz
           EOF

@@ -31,6 +31,7 @@ export const PaymentResultPage: React.FC<PaymentResultPageProps> = ({
   const isFailure = failed || payment?.status === 3 || payment?.status === 4 || payment?.status === 5;
   const hasBlockingError = Boolean(error) && !payment;
   const canRetry = !isSuccess && !isFailure;
+  const referenceNo = payment?.trade_no || payment?.order_no || payment?.payment_no || "-";
 
   const title = isLoading
     ? "正在确认支付结果"
@@ -49,9 +50,9 @@ export const PaymentResultPage: React.FC<PaymentResultPageProps> = ({
   const description = isLoading
     ? "正在向服务器查询本次支付状态，请稍候。"
     : isSuccess
-      ? `订单 ${payment.order_no} 已完成支付。`
+      ? `${payment?.trade_id ? "交易" : "订单"} ${referenceNo} 已完成支付。`
       : isPending
-        ? error || `订单 ${payment.order_no} 当前仍为待支付，系统会继续等待支付平台通知。`
+        ? error || `${payment?.trade_id ? "交易" : "订单"} ${referenceNo} 当前仍为待支付，系统会继续等待支付平台通知。`
         : error
           ? error
           : payment?.failure_reason || "支付未完成，请返回订单中心重新发起支付。";

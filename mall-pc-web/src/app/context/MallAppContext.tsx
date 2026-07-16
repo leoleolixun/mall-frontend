@@ -1,42 +1,72 @@
 import type React from "react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { moneyFromCent } from "@/api/client";
-import type { AddressRequest, AddressResponse, AuthResponse, OrderPreviewResponse, OrderResponse, PayChannel, PaymentResponse, PayScene, ProductDetailResponse, UpdateProfileRequest } from "@/api/client";
-import { products } from "@/data/mock";
+import type { AddressRequest, AddressResponse, AfterSaleResponse, AuthResponse, CategoryResponse, CouponResponse, CreateAfterSaleRequest, LogisticsResponse, MerchantCouponSelection, OrderResponse, PayChannel, PaymentResponse, PayScene, ProductDetailResponse, ProductListItemResponse, TradePreviewResponse, TradeResponse, UpdateProfileRequest, UserCouponResponse } from "@/api/client";
 import { addressApi } from "@/features/address/api/addressApi";
-import { defaultAddressPayload } from "@/features/address/constants/defaultAddress";
+import { afterSaleApi } from "@/features/after-sale/api/afterSaleApi";
 import { authApi } from "@/features/auth/api/authApi";
 import { cartApi } from "@/features/cart/api/cartApi";
 import { mapCartLine } from "@/features/cart/helpers/cartMappers";
 import { catalogApi } from "@/features/catalog/api/catalogApi";
 import { mapProduct } from "@/features/catalog/helpers/catalogMappers";
+import { couponApi } from "@/features/coupon/api/couponApi";
+import { favoriteApi } from "@/features/favorite/api/favoriteApi";
 import { orderApi } from "@/features/order/api/orderApi";
 import { buildOrderItems } from "@/features/order/helpers/orderHelpers";
 import { paymentApi } from "@/features/payment/api/paymentApi";
+import { tradeApi } from "@/features/trade/api/tradeApi";
 import type { CartLine, PageKey, Product } from "@/shared/types/domain";
 
 export interface MallAppContextValue {
+  addressError: string;
+  addressLoading: boolean;
   addresses: AddressResponse[];
+  afterSaleError: string;
+  afterSaleLoading: boolean;
+  afterSales: AfterSaleResponse[];
   auth: AuthResponse | null;
+  availableCoupons: CouponResponse[];
   cart: CartLine[];
   cartCount: number;
+  cartError: string;
+  cartLoading: boolean;
   catalog: Product[];
+  categories: CategoryResponse[];
+  catalogError: string;
+  catalogLoading: boolean;
+  couponError: string;
+  couponLoading: boolean;
+  favoriteError: string;
+  favoriteLoading: boolean;
+  favorites: Product[];
   globalSearch: string;
   isLoggedIn: boolean;
   lastOrder: OrderResponse | null;
+  lastTrade: TradeResponse | null;
   notice: string;
+  orderError: string;
+  orderLoading: boolean;
+  orderSubmitting: boolean;
   orders: OrderResponse[];
-  orderPreview: OrderPreviewResponse | null;
+  orderPreview: TradePreviewResponse | null;
   currentPayment: PaymentResponse | null;
   productDetail: ProductDetailResponse | null;
+  productError: string;
+  productLoading: boolean;
   selectedAddressId?: number;
-  selectedProduct: Product;
-  addToCart: (product: Product, quantity?: number) => Promise<void>;
+  selectedProduct: Product | null;
+  selectedUserCouponIds: Record<number, number | undefined>;
+  userCoupons: UserCouponResponse[];
+  addToCart: (product: Product, quantity?: number) => Promise<boolean>;
+  cancelAfterSale: (id: number) => Promise<boolean>;
+  cancelOrder: (id: number) => Promise<boolean>;
   changeCartQuantity: (id: string, quantity: number) => Promise<void>;
+  claimCoupon: (id: number) => Promise<boolean>;
+  confirmOrder: (id: number) => Promise<OrderResponse | null>;
+  createAfterSale: (payload: CreateAfterSaleRequest) => Promise<AfterSaleResponse | null>;
   createAddress: (payload: AddressRequest) => Promise<boolean>;
-  createDefaultAddress: () => Promise<void>;
   checkPaymentStatus: () => Promise<void>;
   createPayment: (channel: PayChannel, scene?: PayScene) => Promise<PaymentResponse | null>;
   deleteAddress: (id: number) => Promise<boolean>;
@@ -44,14 +74,23 @@ export interface MallAppContextValue {
   handleLogin: (username: string, password: string) => Promise<void>;
   handleLogout: () => Promise<void>;
   handleRegister: (username: string, password: string, nickname: string) => Promise<void>;
+  getAfterSaleDetail: (id: number) => Promise<AfterSaleResponse>;
+  getOrderDetail: (id: number) => Promise<OrderResponse>;
+  getOrderLogistics: (id: number) => Promise<LogisticsResponse>;
   navigateProtected: (to: string) => void;
   navigateToPage: (page: PageKey) => void;
   openOrderPayment: (order: OrderResponse) => void;
   openProduct: (product: Product) => void;
+  reloadCatalog: () => void;
+  reloadAddresses: () => void;
+  reloadOrders: () => void;
+  reloadCart: () => void;
   setDefaultAddress: (id: number) => Promise<boolean>;
   setGlobalSearch: (value: string) => void;
   setSelectedAddressId: (id: number) => void;
+  setSelectedMerchantCoupon: (merchantId: number, id?: number) => void;
   submitOrder: () => Promise<void>;
+  toggleFavorite: (productId: number) => Promise<boolean>;
   updateAddress: (id: number, payload: AddressRequest) => Promise<boolean>;
   updateProfile: (payload: UpdateProfileRequest) => Promise<boolean>;
 }
@@ -65,17 +104,13 @@ interface MallAppProviderProps {
 
 const routeByPage: Partial<Record<PageKey, string>> = {
   auth: "/login",
-  bundle: "/bundle",
   cart: "/cart",
   "cart-empty": "/cart",
   checkout: "/checkout",
-  compare: "/compare",
   home: "/",
   payment: "/payment",
   "payment-failed": "/payment/failed",
   "payment-result": "/payment/result",
-  pickup: "/pickup",
-  presale: "/presale",
   "product-list": "/products"
 };
 
@@ -86,7 +121,28 @@ const readGuestCart = (): CartLine[] => {
   }
 
   try {
-    return JSON.parse(raw) as CartLine[];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      throw new Error("invalid guest cart");
+    }
+
+    const lines = parsed.filter((line): line is CartLine => {
+      if (!line || typeof line !== "object") {
+        return false;
+      }
+      const item = line as Partial<CartLine>;
+      return typeof item.id === "string"
+        && typeof item.skuId === "number"
+        && item.skuId > 0
+        && typeof item.name === "string"
+        && typeof item.price === "number"
+        && item.price >= 0
+        && typeof item.quantity === "number"
+        && Number.isInteger(item.quantity)
+        && item.quantity > 0;
+    });
+    window.localStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify(lines));
+    return lines;
   } catch {
     window.localStorage.removeItem(GUEST_CART_STORAGE_KEY);
     return [];
@@ -105,20 +161,71 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   const navigate = useNavigate();
   const location = useLocation();
   const [globalSearch, setGlobalSearch] = useState("");
-  const [catalog, setCatalog] = useState<Product[]>(products);
+  const [catalog, setCatalog] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<CategoryResponse[]>([]);
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogReloadKey, setCatalogReloadKey] = useState(0);
   const [notice, setNotice] = useState("");
   const [auth, setAuth] = useState<AuthResponse | null>(() => authApi.storage.read());
   const [cart, setCart] = useState<CartLine[]>(() => authApi.storage.read() ? [] : readGuestCart());
-  const [selectedProduct, setSelectedProduct] = useState<Product>(products[1]);
+  const [cartLoading, setCartLoading] = useState(false);
+  const [cartError, setCartError] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productDetail, setProductDetail] = useState<ProductDetailResponse | null>(null);
+  const [productError, setProductError] = useState("");
+  const [productLoading, setProductLoading] = useState(true);
   const [addresses, setAddresses] = useState<AddressResponse[]>([]);
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [addressError, setAddressError] = useState("");
+  const [availableCoupons, setAvailableCoupons] = useState<CouponResponse[]>([]);
+  const [userCoupons, setUserCoupons] = useState<UserCouponResponse[]>([]);
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponError, setCouponError] = useState("");
+  const [favoriteItems, setFavoriteItems] = useState<ProductListItemResponse[]>([]);
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [favoriteError, setFavoriteError] = useState("");
+  const [afterSales, setAfterSales] = useState<AfterSaleResponse[]>([]);
+  const [afterSaleLoading, setAfterSaleLoading] = useState(false);
+  const [afterSaleError, setAfterSaleError] = useState("");
   const [selectedAddressId, setSelectedAddressId] = useState<number | undefined>();
-  const [orderPreview, setOrderPreview] = useState<OrderPreviewResponse | null>(null);
+  const [selectedUserCouponIds, setSelectedUserCouponIds] = useState<Record<number, number | undefined>>({});
+  const [orderPreview, setOrderPreview] = useState<TradePreviewResponse | null>(null);
   const [orders, setOrders] = useState<OrderResponse[]>([]);
+  const [orderLoading, setOrderLoading] = useState(false);
+  const [orderError, setOrderError] = useState("");
+  const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [lastOrder, setLastOrder] = useState<OrderResponse | null>(null);
+  const [lastTrade, setLastTrade] = useState<TradeResponse | null>(null);
   const [currentPayment, setCurrentPayment] = useState<PaymentResponse | null>(null);
   const [redirectAfterLogin, setRedirectAfterLogin] = useState("/");
+  const catalogRef = useRef<Product[]>([]);
+  const productRequestRef = useRef(0);
+  const orderSubmittingRef = useRef(false);
   const isLoggedIn = Boolean(auth?.access_token);
+  const selectedMerchantCoupons = useMemo<MerchantCouponSelection[]>(() => Object.entries(selectedUserCouponIds)
+    .map(([merchantId, userCouponId]) => ({
+      merchant_id: Number(merchantId),
+      user_coupon_id: Number(userCouponId)
+    }))
+    .filter((item) => item.merchant_id > 0 && item.user_coupon_id > 0)
+    .sort((left, right) => left.merchant_id - right.merchant_id), [selectedUserCouponIds]);
+
+  const setSelectedMerchantCoupon = useCallback((merchantId: number, id?: number): void => {
+    if (merchantId <= 0) return;
+    setSelectedUserCouponIds((current) => {
+      const next = { ...current };
+      if (id && id > 0) next[merchantId] = id;
+      else delete next[merchantId];
+      return next;
+    });
+  }, []);
+
+  const reloadCatalog = useCallback((): void => {
+    setCatalogReloadKey((current) => current + 1);
+  }, []);
+
+  useEffect(() => authApi.storage.subscribe(setAuth), []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -143,16 +250,30 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     let alive = true;
 
     const loadCatalog = async (): Promise<void> => {
+      setCatalogLoading(true);
+      setCatalogError("");
       try {
-        const categoryList = await catalogApi.categories();
-        const page = await catalogApi.products({ page: 1, pageSize: 50 });
+        const [categoryList, page] = await Promise.all([
+          catalogApi.categories().catch(() => []),
+          catalogApi.products({ page: 1, pageSize: 50 })
+        ]);
         if (!alive) {
           return;
         }
-        setCatalog(page.list.map((item) => mapProduct(item, categoryList)));
-      } catch {
+        const nextCatalog = page.list.map((item) => mapProduct(item, categoryList));
+        setCategories(categoryList);
+        catalogRef.current = nextCatalog;
+        setCatalog(nextCatalog);
+      } catch (error) {
         if (alive) {
-          setCatalog(products);
+          catalogRef.current = [];
+          setCatalog([]);
+          setCategories([]);
+          setCatalogError(error instanceof Error ? error.message : "商品加载失败");
+        }
+      } finally {
+        if (alive) {
+          setCatalogLoading(false);
         }
       }
     };
@@ -161,69 +282,232 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     return () => {
       alive = false;
     };
-  }, []);
+  }, [catalogReloadKey]);
 
-  const refreshCart = useCallback(async (): Promise<void> => {
+  const refreshCart = useCallback(async (showLoading = true): Promise<void> => {
     if (!authApi.storage.read()?.access_token) {
       return;
     }
 
-    const items = await cartApi.items();
-    setCart(items.map(mapCartLine));
+    if (showLoading) {
+      setCartLoading(true);
+    }
+    setCartError("");
+    try {
+      const items = await cartApi.items();
+      setCart(items.map(mapCartLine));
+    } catch (error) {
+      setCartError(error instanceof Error ? error.message : "购物车加载失败");
+    } finally {
+      if (showLoading) {
+        setCartLoading(false);
+      }
+    }
   }, []);
 
-  const refreshAddresses = useCallback(async (): Promise<void> => {
+  const reloadCart = useCallback((): void => {
+    void refreshCart();
+  }, [refreshCart]);
+
+  const refreshAddresses = useCallback(async (showLoading = true): Promise<void> => {
     if (!authApi.storage.read()?.access_token) {
       return;
     }
 
-    const list = await addressApi.list();
-    setAddresses(list);
-    setSelectedAddressId((current) => current ?? list.find((address) => address.is_default)?.id ?? list[0]?.id);
+    if (showLoading) {
+      setAddressLoading(true);
+    }
+    setAddressError("");
+    try {
+      const list = await addressApi.list();
+      setAddresses(list);
+      setSelectedAddressId((current) => {
+        if (current && list.some((address) => address.id === current)) {
+          return current;
+        }
+        return list.find((address) => address.is_default)?.id ?? list[0]?.id;
+      });
+    } catch (error) {
+      setAddressError(error instanceof Error ? error.message : "收货地址加载失败");
+    } finally {
+      if (showLoading) {
+        setAddressLoading(false);
+      }
+    }
   }, []);
 
-  const refreshOrders = useCallback(async (): Promise<void> => {
+  const reloadAddresses = useCallback((): void => {
+    void refreshAddresses();
+  }, [refreshAddresses]);
+
+  const refreshOrders = useCallback(async (showLoading = true): Promise<void> => {
     if (!authApi.storage.read()?.access_token) {
       return;
     }
 
-    const page = await orderApi.list({ page: 1, pageSize: 20 });
-    setOrders(page.list);
-    setLastOrder((current) => current ?? page.list.find((order) => order.status === 1) ?? page.list[0] ?? null);
+    if (showLoading) {
+      setOrderLoading(true);
+    }
+    setOrderError("");
+    try {
+      const page = await orderApi.list({ page: 1, pageSize: 20 });
+      setOrders(page.list);
+      setLastOrder((current) => {
+        if (current) {
+          return page.list.find((order) => order.id === current.id) ?? current;
+        }
+        return page.list.find((order) => order.status === 1) ?? page.list[0] ?? null;
+      });
+    } catch (error) {
+      setOrderError(error instanceof Error ? error.message : "订单加载失败");
+    } finally {
+      if (showLoading) {
+        setOrderLoading(false);
+      }
+    }
+  }, []);
+
+  const reloadOrders = useCallback((): void => {
+    void refreshOrders();
+  }, [refreshOrders]);
+
+  const refreshCoupons = useCallback(async (showLoading = true): Promise<void> => {
+    if (!authApi.storage.read()?.access_token) {
+      return;
+    }
+
+    if (showLoading) {
+      setCouponLoading(true);
+    }
+    setCouponError("");
+    try {
+      const [available, mine] = await Promise.all([
+        couponApi.available(),
+        couponApi.mine()
+      ]);
+      setAvailableCoupons(available);
+      setUserCoupons(mine);
+      setSelectedUserCouponIds((current) => Object.fromEntries(
+        Object.entries(current).filter(([merchantId, couponId]) => mine.some((item) => item.id === couponId
+          && item.status === 1
+          && item.coupon.merchant_id === Number(merchantId)))
+      ));
+    } catch (error) {
+      setCouponError(error instanceof Error ? error.message : "优惠券加载失败");
+    } finally {
+      if (showLoading) {
+        setCouponLoading(false);
+      }
+    }
+  }, []);
+
+  const refreshFavorites = useCallback(async (showLoading = true): Promise<void> => {
+    if (!authApi.storage.read()?.access_token) {
+      return;
+    }
+
+    if (showLoading) {
+      setFavoriteLoading(true);
+    }
+    setFavoriteError("");
+    try {
+      const page = await favoriteApi.list();
+      setFavoriteItems(page.list);
+    } catch (error) {
+      setFavoriteError(error instanceof Error ? error.message : "收藏商品加载失败");
+    } finally {
+      if (showLoading) {
+        setFavoriteLoading(false);
+      }
+    }
+  }, []);
+
+  const refreshAfterSales = useCallback(async (showLoading = true): Promise<void> => {
+    if (!authApi.storage.read()?.access_token) {
+      return;
+    }
+
+    if (showLoading) {
+      setAfterSaleLoading(true);
+    }
+    setAfterSaleError("");
+    try {
+      const page = await afterSaleApi.list();
+      setAfterSales(page.list);
+    } catch (error) {
+      setAfterSaleError(error instanceof Error ? error.message : "售后记录加载失败");
+    } finally {
+      if (showLoading) {
+        setAfterSaleLoading(false);
+      }
+    }
   }, []);
 
   const syncGuestCart = useCallback(async (lines: CartLine[]): Promise<void> => {
     const remoteLines = lines.filter((line) => line.skuId && line.quantity > 0);
+    let remaining = [...remoteLines];
     for (const line of remoteLines) {
       await cartApi.addItem(line.skuId as number, line.quantity);
+      remaining = remaining.filter((item) => item.id !== line.id);
+      writeGuestCart(remaining);
     }
   }, []);
 
   useEffect(() => {
     if (!auth) {
+      setCart(readGuestCart());
+      setCartError("");
+      setCartLoading(false);
       setOrderPreview(null);
       setAddresses([]);
+      setAddressError("");
+      setAddressLoading(false);
+      setAvailableCoupons([]);
+      setUserCoupons([]);
+      setCouponError("");
+      setCouponLoading(false);
+      setFavoriteItems([]);
+      setFavoriteError("");
+      setFavoriteLoading(false);
+      setAfterSales([]);
+      setAfterSaleError("");
+      setAfterSaleLoading(false);
       setOrders([]);
+      setOrderError("");
+      setOrderLoading(false);
+      setOrderSubmitting(false);
+      orderSubmittingRef.current = false;
       setLastOrder(null);
+      setLastTrade(null);
       setCurrentPayment(null);
       setSelectedAddressId(undefined);
+      setSelectedUserCouponIds({});
       return;
     }
 
-    void refreshCart().catch((error: Error) => setNotice(error.message));
-    void refreshAddresses().catch((error: Error) => setNotice(error.message));
-    void refreshOrders().catch((error: Error) => setNotice(error.message));
-  }, [auth, refreshAddresses, refreshCart, refreshOrders]);
+    void refreshCart();
+    void refreshAddresses();
+    void refreshOrders();
+    void refreshCoupons();
+    void refreshFavorites();
+    void refreshAfterSales();
+  }, [auth, refreshAddresses, refreshAfterSales, refreshCart, refreshCoupons, refreshFavorites, refreshOrders]);
 
   useEffect(() => {
     const items = buildOrderItems(cart);
-    if (!isLoggedIn || location.pathname !== "/checkout" || !selectedAddressId || items.length === 0) {
+    const hasUnavailableItem = cart.some((line) => line.available === false);
+    if (!isLoggedIn || location.pathname !== "/checkout" || orderSubmittingRef.current || !selectedAddressId || items.length === 0 || hasUnavailableItem) {
       setOrderPreview(null);
       return;
     }
 
     let alive = true;
-    void orderApi.preview({ address_id: selectedAddressId, items })
+    setOrderPreview(null);
+    void tradeApi.preview({
+      address_id: selectedAddressId,
+      merchant_coupons: selectedMerchantCoupons,
+      items
+    })
       .then((preview) => {
         if (alive) {
           setOrderPreview(preview);
@@ -239,21 +523,34 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     return () => {
       alive = false;
     };
-  }, [cart, isLoggedIn, location.pathname, selectedAddressId]);
+  }, [cart, isLoggedIn, location.pathname, selectedAddressId, selectedMerchantCoupons]);
 
   const cartCount = useMemo(() => cart.reduce((sum, line) => sum + line.quantity, 0), [cart]);
+  const favorites = useMemo(() => favoriteItems.map((item) => (
+    catalog.find((product) => product.apiId === item.id) ?? mapProduct(item, [])
+  )), [catalog, favoriteItems]);
 
   const navigateToPath = useCallback((to: string): void => {
     void navigate({ to });
   }, [navigate]);
 
+  useEffect(() => authApi.storage.subscribeExpired(() => {
+    const currentPath = `${location.pathname}${window.location.search}`;
+    setRedirectAfterLogin(currentPath === "/login" ? "/" : currentPath);
+    setNotice("登录状态已过期，请重新登录");
+    navigateToPath("/login");
+  }), [location.pathname, navigateToPath]);
+
   const resolveProductSku = useCallback(async (product: Product): Promise<Product> => {
-    if (product.skuId || !product.apiId) {
+    if (product.skuId) {
       return product;
+    }
+    if (!product.apiId) {
+      throw new Error("商品数据已失效，请刷新商品列表后重试");
     }
 
     const detail = await catalogApi.productDetail(product.apiId);
-    const sku = detail.skus[0];
+    const sku = detail.skus.find((item) => item.stock > 0);
     if (!sku) {
       throw new Error("商品暂无可售规格");
     }
@@ -261,43 +558,52 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     return {
       ...product,
       skuId: sku.id,
-      price: moneyFromCent(sku.price)
+      skuName: sku.name,
+      price: moneyFromCent(sku.price),
+      cover: sku.image || detail.cover || product.cover
     };
   }, []);
 
-  const addToCart = useCallback(async (product: Product, quantity = 1): Promise<void> => {
+  const addToCart = useCallback(async (product: Product, quantity = 1): Promise<boolean> => {
     try {
       const cartProduct = await resolveProductSku(product);
 
       if (isLoggedIn && cartProduct.skuId) {
         await cartApi.addItem(cartProduct.skuId, quantity);
-        await refreshCart();
+        await refreshCart(false);
         setNotice("已加入购物车：" + cartProduct.name);
-        return;
+        return true;
       }
 
       setCart((current) => {
-        const existing = current.find((line) => line.id === cartProduct.id);
+        const lineId = String(cartProduct.skuId ?? cartProduct.id);
+        const existing = current.find((line) => line.id === lineId);
         if (existing) {
-          return current.map((line) => line.id === cartProduct.id ? { ...line, quantity: line.quantity + quantity } : line);
+          return current.map((line) => line.id === lineId ? { ...line, quantity: line.quantity + quantity } : line);
         }
 
         return [
           ...current,
           {
-            id: cartProduct.id,
+            id: lineId,
+            merchantId: cartProduct.merchantId,
+            merchantName: cartProduct.merchantName || (cartProduct.merchantId ? `商户 ${cartProduct.merchantId}` : undefined),
+            merchantLogo: cartProduct.merchantLogo,
             skuId: cartProduct.skuId,
             productId: cartProduct.apiId,
+            cover: cartProduct.cover,
             name: cartProduct.name,
-            spec: cartProduct.skuId ? "后端默认规格" : cartProduct.category,
+            spec: cartProduct.skuName || "默认规格",
             price: cartProduct.price,
             quantity
           }
         ];
       });
       setNotice("已加入购物车：" + cartProduct.name);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "加入购物车失败");
+      return false;
     }
   }, [isLoggedIn, refreshCart, resolveProductSku]);
 
@@ -310,7 +616,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
         } else {
           await cartApi.updateItem(line.skuId, quantity);
         }
-        await refreshCart();
+        await refreshCart(false);
       } catch (error) {
         setNotice(error instanceof Error ? error.message : "更新购物车失败");
       }
@@ -326,43 +632,66 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   }, [cart, isLoggedIn, refreshCart]);
 
   const openProduct = useCallback((product: Product): void => {
+    if (!product.apiId) {
+      setNotice("商品数据已失效，请刷新商品列表后重试");
+      return;
+    }
     const productId = String(product.apiId ?? product.id);
     setSelectedProduct(product);
     setProductDetail(null);
+    setProductError("");
+    setProductLoading(true);
     navigateToPath(`/products/${productId}`);
-    if (product.apiId) {
-      void catalogApi.productDetail(product.apiId)
-        .then(setProductDetail)
-        .catch((error: Error) => setNotice(error.message));
-    }
   }, [navigateToPath]);
 
   const ensureProductForRoute = useCallback((productId: string): void => {
-    const matched = catalog.find((product) => String(product.apiId ?? product.id) === productId);
-    if (matched && matched.id !== selectedProduct.id) {
-      setSelectedProduct(matched);
-    }
+    const requestId = ++productRequestRef.current;
+    const matched = catalogRef.current.find((product) => String(product.apiId ?? product.id) === productId);
+    setSelectedProduct(matched ?? null);
+    setProductDetail(null);
+    setProductError("");
+    setProductLoading(true);
 
     const numericProductId = Number(productId);
     if (!Number.isFinite(numericProductId) || numericProductId <= 0) {
+      setProductError("商品编号无效");
+      setProductLoading(false);
       return;
     }
 
     void catalogApi.productDetail(numericProductId)
       .then((detail) => {
+        if (productRequestRef.current !== requestId) {
+          return;
+        }
         setProductDetail(detail);
         setSelectedProduct((current) => ({
-          ...current,
-          apiId: detail.id,
-          categoryId: detail.category_id,
-          description: detail.description,
           id: String(detail.id),
+          apiId: detail.id,
+          merchantId: detail.merchant_id,
+          merchantName: detail.merchant_name,
+          merchantLogo: detail.merchant_logo,
+          skuId: detail.skus[0]?.id,
+          skuName: detail.skus[0]?.name,
           name: detail.name,
-          price: detail.skus[0] ? moneyFromCent(detail.skus[0].price) : current.price
+          price: detail.skus[0] ? moneyFromCent(detail.skus[0].price) : current?.price ?? 0,
+          category: current?.category ?? `分类 ${detail.category_id}`,
+          categoryId: detail.category_id,
+          brand: current?.brand ?? "",
+          badge: current?.badge ?? "",
+          sales: current?.sales ?? "",
+          cover: detail.cover,
+          description: detail.description,
         }));
+        setProductLoading(false);
       })
-      .catch((error: Error) => setNotice(error.message));
-  }, [catalog, selectedProduct.id]);
+      .catch((error: Error) => {
+        if (productRequestRef.current === requestId) {
+          setProductError(error.message || "商品详情加载失败");
+          setProductLoading(false);
+        }
+      });
+  }, []);
 
   const navigateProtected = useCallback((to: string): void => {
     if (!isLoggedIn) {
@@ -374,17 +703,107 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     navigateToPath(to);
   }, [isLoggedIn, navigateToPath]);
 
-  const navigateToPage = useCallback((page: PageKey): void => {
-    if (page === "product-detail") {
-      openProduct(selectedProduct);
-      return;
+  const claimCoupon = useCallback(async (id: number): Promise<boolean> => {
+    try {
+      await couponApi.claim(id);
+      await refreshCoupons(false);
+      setNotice("优惠券领取成功");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "优惠券领取失败");
+      return false;
     }
-    if (page === "reviews") {
-      const productId = String(selectedProduct.apiId ?? selectedProduct.id);
-      navigateToPath(`/products/${productId}/reviews`);
-      return;
+  }, [refreshCoupons]);
+
+  const toggleFavorite = useCallback(async (productId: number): Promise<boolean> => {
+    if (!isLoggedIn) {
+      navigateProtected(location.pathname);
+      return false;
     }
 
+    const favorite = favoriteItems.some((item) => item.id === productId);
+    try {
+      if (favorite) {
+        await favoriteApi.remove(productId);
+      } else {
+        await favoriteApi.add(productId);
+      }
+      await refreshFavorites(false);
+      setNotice(favorite ? "已取消收藏" : "已收藏商品");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : favorite ? "取消收藏失败" : "收藏商品失败");
+      return false;
+    }
+  }, [favoriteItems, isLoggedIn, location.pathname, navigateProtected, refreshFavorites]);
+
+  const cancelAfterSale = useCallback(async (id: number): Promise<boolean> => {
+    try {
+      await afterSaleApi.cancel(id);
+      await refreshAfterSales(false);
+      setNotice("售后申请已取消");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "取消售后申请失败");
+      return false;
+    }
+  }, [refreshAfterSales]);
+
+  const createAfterSale = useCallback(async (payload: CreateAfterSaleRequest): Promise<AfterSaleResponse | null> => {
+    try {
+      const result = await afterSaleApi.create(payload);
+      await refreshAfterSales(false);
+      setNotice("售后申请已提交");
+      return result;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "提交售后申请失败");
+      return null;
+    }
+  }, [refreshAfterSales]);
+
+  const getAfterSaleDetail = useCallback((id: number): Promise<AfterSaleResponse> => afterSaleApi.detail(id), []);
+
+  const getOrderDetail = useCallback((id: number): Promise<OrderResponse> => orderApi.detail(id), []);
+
+  const getOrderLogistics = useCallback((id: number): Promise<LogisticsResponse> => orderApi.logistics(id), []);
+
+  const cancelOrder = useCallback(async (id: number): Promise<boolean> => {
+    try {
+      const currentOrder = orders.find((order) => order.id === id)
+        ?? (lastOrder?.id === id ? lastOrder : await orderApi.detail(id));
+      if (currentOrder.trade_id) await tradeApi.cancel(currentOrder.trade_id);
+      else await orderApi.cancel(id);
+      await refreshOrders(false);
+      setNotice(currentOrder.trade_id ? "交易及全部商户订单已取消" : "订单已取消");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "取消订单失败");
+      return false;
+    }
+  }, [lastOrder, orders, refreshOrders]);
+
+  const confirmOrder = useCallback(async (id: number): Promise<OrderResponse | null> => {
+    try {
+      const latest = await orderApi.confirm(id);
+      setOrders((current) => current.map((order) => order.id === id ? latest : order));
+      setLastOrder((current) => current?.id === id ? latest : current);
+      setNotice("已确认收货");
+      return latest;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "确认收货失败");
+      return null;
+    }
+  }, []);
+
+  const navigateToPage = useCallback((page: PageKey): void => {
+    if (page === "product-detail") {
+      if (selectedProduct) {
+        openProduct(selectedProduct);
+      } else {
+        navigateToPath("/products");
+      }
+      return;
+    }
     navigateToPath(routeByPage[page] ?? "/");
   }, [navigateToPath, openProduct, selectedProduct]);
 
@@ -393,10 +812,17 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
       const result = await authApi.login({ username, password });
       const guestCart = cart;
       authApi.storage.write(result);
-      await syncGuestCart(guestCart);
+      try {
+        await syncGuestCart(guestCart);
+      } catch {
+        authApi.storage.clear();
+        setAuth(null);
+        setNotice("账号登录成功，但购物车同步失败，请重试登录");
+        return;
+      }
       clearGuestCart();
       setAuth(result);
-      await refreshCart();
+      await refreshCart(false);
       setNotice("登录成功");
       navigateToPath(redirectAfterLogin);
     } catch (error) {
@@ -409,10 +835,17 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
       const result = await authApi.register({ username, password, nickname });
       const guestCart = cart;
       authApi.storage.write(result);
-      await syncGuestCart(guestCart);
+      try {
+        await syncGuestCart(guestCart);
+      } catch {
+        authApi.storage.clear();
+        setAuth(null);
+        setNotice("账号创建成功，但购物车同步失败，请重新登录");
+        return;
+      }
       clearGuestCart();
       setAuth(result);
-      await refreshCart();
+      await refreshCart(false);
       setNotice("注册成功");
       navigateToPath(redirectAfterLogin);
     } catch (error) {
@@ -423,7 +856,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   const handleLogout = useCallback(async (): Promise<void> => {
     try {
       if (auth?.refresh_token) {
-        await authApi.logout(auth.refresh_token);
+        await authApi.logout();
       }
     } catch {
       // 本地退出不依赖后端退出结果。
@@ -438,21 +871,10 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     }
   }, [auth?.refresh_token, navigateToPath]);
 
-  const createDefaultAddress = useCallback(async (): Promise<void> => {
-    try {
-      const created = await addressApi.create(defaultAddressPayload);
-      setAddresses((current) => [created, ...current.filter((address) => address.id !== created.id)]);
-      setSelectedAddressId(created.id);
-      setNotice("已创建默认收货地址");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "创建地址失败");
-    }
-  }, []);
-
   const createAddress = useCallback(async (payload: AddressRequest): Promise<boolean> => {
     try {
       const created = await addressApi.create(payload);
-      await refreshAddresses();
+      await refreshAddresses(false);
       setSelectedAddressId((current) => payload.is_default || !current ? created.id : current);
       setNotice("收货地址已新增");
       return true;
@@ -465,7 +887,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   const updateAddress = useCallback(async (id: number, payload: AddressRequest): Promise<boolean> => {
     try {
       const updated = await addressApi.update(id, payload);
-      await refreshAddresses();
+      await refreshAddresses(false);
       setSelectedAddressId((current) => payload.is_default ? updated.id : current);
       setNotice("收货地址已更新");
       return true;
@@ -497,7 +919,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   const setDefaultAddress = useCallback(async (id: number): Promise<boolean> => {
     try {
       await addressApi.setDefault(id);
-      await refreshAddresses();
+      await refreshAddresses(false);
       setSelectedAddressId(id);
       setNotice("默认地址已更新");
       return true;
@@ -508,6 +930,9 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   }, [refreshAddresses]);
 
   const submitOrder = useCallback(async (): Promise<void> => {
+    if (orderSubmittingRef.current) {
+      return;
+    }
     const items = buildOrderItems(cart);
     if (!selectedAddressId) {
       setNotice("请先选择收货地址");
@@ -517,54 +942,92 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
       setNotice("购物车没有可结算商品");
       return;
     }
+    if (cart.some((line) => line.available === false)) {
+      setNotice("购物车中存在不可结算商品，请先处理");
+      return;
+    }
 
+    orderSubmittingRef.current = true;
+    setOrderSubmitting(true);
     try {
-      const preview = await orderApi.preview({ address_id: selectedAddressId, items });
-      setOrderPreview(preview);
-      const order = await orderApi.create({
+      const preview = await tradeApi.preview({
         address_id: selectedAddressId,
+        merchant_coupons: selectedMerchantCoupons,
+        items
+      });
+      setOrderPreview(preview);
+      const trade = await tradeApi.create({
+        address_id: selectedAddressId,
+        merchant_coupons: selectedMerchantCoupons,
         remark: "PC 端下单",
         idempotency_token: preview.idempotency_token,
         items
       });
-      setLastOrder(order);
-      setOrders((current) => [order, ...current.filter((item) => item.id !== order.id)]);
+      const firstOrder = trade.orders[0] ?? null;
+      setLastTrade(trade);
+      setLastOrder(firstOrder);
+      setOrders((current) => [
+        ...trade.orders,
+        ...current.filter((item) => !trade.orders.some((created) => created.id === item.id))
+      ]);
       setCurrentPayment(null);
       setOrderPreview(null);
-      await refreshCart();
+      setSelectedUserCouponIds({});
+      await Promise.all([refreshCart(false), refreshCoupons()]);
       navigateToPath("/payment");
-      setNotice("订单创建成功，请选择支付方式");
+      setNotice(`交易创建成功，共生成 ${trade.orders.length} 张商户订单，请完成合并支付`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "创建订单失败");
+    } finally {
+      orderSubmittingRef.current = false;
+      setOrderSubmitting(false);
     }
-  }, [cart, navigateToPath, refreshCart, selectedAddressId]);
+  }, [cart, navigateToPath, refreshCart, refreshCoupons, selectedAddressId, selectedMerchantCoupons]);
 
   const openOrderPayment = useCallback((order: OrderResponse): void => {
     if (order.status !== 1) {
       setNotice("当前订单不需要支付");
       return;
     }
-    setLastOrder(order);
-    setCurrentPayment(null);
-    navigateToPath("/payment");
+    void (async () => {
+      try {
+        if (order.trade_id) {
+          const trade = await tradeApi.detail(order.trade_id);
+          if (trade.status !== 1) {
+            setNotice("当前交易不需要支付");
+            return;
+          }
+          setLastTrade(trade);
+          setLastOrder(trade.orders.find((item) => item.id === order.id) ?? order);
+        } else {
+          setLastTrade(null);
+          setLastOrder(order);
+        }
+        setCurrentPayment(null);
+        navigateToPath("/payment");
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "加载待支付交易失败");
+      }
+    })();
   }, [navigateToPath]);
 
   const createPayment = useCallback(async (channel: PayChannel, scene?: PayScene): Promise<PaymentResponse | null> => {
-    if (!lastOrder) {
-      setNotice("暂无待支付订单");
+    if (!lastTrade && !lastOrder) {
+      setNotice("暂无待支付交易");
       return null;
     }
-    if (channel === "stripe") {
-      setNotice("Stripe 支付暂未接入");
+    if (lastTrade && lastTrade.status !== 1) {
+      setNotice("当前交易不需要支付");
       return null;
     }
-
+    if (!lastTrade && lastOrder?.status !== 1) {
+      setNotice("当前订单不需要支付");
+      return null;
+    }
     try {
-      const payment = await paymentApi.create({
-        order_id: lastOrder.id,
-        pay_channel: channel,
-        pay_scene: scene
-      });
+      const payment = lastTrade
+        ? await paymentApi.create({ trade_id: lastTrade.id, pay_channel: channel, pay_scene: scene })
+        : await paymentApi.create({ order_id: lastOrder!.id, pay_channel: channel, pay_scene: scene });
       setCurrentPayment(payment);
       paymentApi.pendingStorage.write(payment.payment_no);
       setNotice("支付单已创建");
@@ -573,11 +1036,11 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
       setNotice(error instanceof Error ? error.message : "创建支付单失败");
       return null;
     }
-  }, [lastOrder]);
+  }, [lastOrder, lastTrade]);
 
   const checkPaymentStatus = useCallback(async (): Promise<void> => {
-    if (!lastOrder) {
-      setNotice("暂无待支付订单");
+    if (!lastTrade && !lastOrder) {
+      setNotice("暂无待支付交易");
       return;
     }
     if (!currentPayment) {
@@ -586,15 +1049,27 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     }
 
     try {
-      const latestPayment = await paymentApi.detail(currentPayment.payment_no);
+      const detail = await paymentApi.detail(currentPayment.payment_no);
+      const latestPayment = detail.status === 1 && detail.pay_channel === "alipay"
+        ? await paymentApi.sync(detail.payment_no)
+        : detail;
       setCurrentPayment(latestPayment);
       if (latestPayment.status === 2) {
-        setLastOrder({
-          ...lastOrder,
-          status: 2,
-          status_text: "已支付"
-        });
-        setOrders((current) => current.map((order) => order.id === lastOrder.id ? { ...order, status: 2, status_text: "已支付" } : order));
+        const tradeID = latestPayment.trade_id ?? lastTrade?.id;
+        if (tradeID) {
+          const latestTrade = await tradeApi.detail(tradeID);
+          setLastTrade(latestTrade);
+          const nextOrder = latestTrade.orders.find((order) => order.id === lastOrder?.id) ?? latestTrade.orders[0] ?? null;
+          setLastOrder(nextOrder);
+          setOrders((current) => [
+            ...latestTrade.orders,
+            ...current.filter((item) => !latestTrade.orders.some((updated) => updated.id === item.id))
+          ]);
+        } else if (lastOrder) {
+          const latestOrder = await orderApi.detail(lastOrder.id);
+          setLastOrder(latestOrder);
+          setOrders((current) => current.map((order) => order.id === lastOrder.id ? latestOrder : order));
+        }
         navigateToPath("/payment/result");
         setNotice("支付成功");
         return;
@@ -603,7 +1078,7 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "查询支付状态失败");
     }
-  }, [currentPayment, lastOrder, navigateToPath]);
+  }, [currentPayment, lastOrder, lastTrade, navigateToPath]);
 
   const updateProfile = useCallback(async (payload: UpdateProfileRequest): Promise<boolean> => {
     if (!auth) {
@@ -625,25 +1100,53 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
   }, [auth]);
 
   const value = useMemo<MallAppContextValue>(() => ({
+    addressError,
+    addressLoading,
     addresses,
+    afterSaleError,
+    afterSaleLoading,
+    afterSales,
     auth,
+    availableCoupons,
     cart,
     cartCount,
+    cartError,
+    cartLoading,
     catalog,
+    categories,
+    catalogError,
+    catalogLoading,
+    couponError,
+    couponLoading,
+    favoriteError,
+    favoriteLoading,
+    favorites,
     globalSearch,
     isLoggedIn,
     lastOrder,
+    lastTrade,
     notice,
+    orderError,
+    orderLoading,
+    orderSubmitting,
     orders,
     orderPreview,
     currentPayment,
     productDetail,
+    productError,
+    productLoading,
     selectedAddressId,
     selectedProduct,
+    selectedUserCouponIds,
+    userCoupons,
     addToCart,
+    cancelAfterSale,
+    cancelOrder,
     changeCartQuantity,
+    claimCoupon,
+    confirmOrder,
+    createAfterSale,
     createAddress,
-    createDefaultAddress,
     checkPaymentStatus,
     createPayment,
     deleteAddress,
@@ -651,36 +1154,73 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     handleLogin,
     handleLogout,
     handleRegister,
+    getAfterSaleDetail,
+    getOrderDetail,
+    getOrderLogistics,
     navigateProtected,
     navigateToPage,
     openOrderPayment,
     openProduct,
+    reloadCatalog,
+    reloadAddresses,
+    reloadOrders,
+    reloadCart,
     setDefaultAddress,
     setGlobalSearch,
     setSelectedAddressId,
+    setSelectedMerchantCoupon,
     submitOrder,
+    toggleFavorite,
     updateAddress,
     updateProfile
   }), [
+    addressError,
+    addressLoading,
     addresses,
+    afterSaleError,
+    afterSaleLoading,
+    afterSales,
     auth,
+    availableCoupons,
     cart,
     cartCount,
+    cartError,
+    cartLoading,
     catalog,
+    categories,
+    catalogError,
+    catalogLoading,
+    couponError,
+    couponLoading,
+    favoriteError,
+    favoriteLoading,
+    favorites,
     globalSearch,
     isLoggedIn,
     lastOrder,
+    lastTrade,
     notice,
+    orderError,
+    orderLoading,
+    orderSubmitting,
     orders,
     orderPreview,
     currentPayment,
     productDetail,
+    productError,
+    productLoading,
     selectedAddressId,
     selectedProduct,
+    selectedUserCouponIds,
+    userCoupons,
     addToCart,
+    cancelAfterSale,
+    cancelOrder,
     changeCartQuantity,
+    claimCoupon,
+    confirmOrder,
+    createAfterSale,
     createAddress,
-    createDefaultAddress,
     checkPaymentStatus,
     createPayment,
     deleteAddress,
@@ -688,12 +1228,21 @@ export const MallAppProvider: React.FC<MallAppProviderProps> = ({ children }) =>
     handleLogin,
     handleLogout,
     handleRegister,
+    getAfterSaleDetail,
+    getOrderDetail,
+    getOrderLogistics,
     navigateProtected,
     navigateToPage,
     openOrderPayment,
     openProduct,
+    reloadCatalog,
+    reloadAddresses,
+    reloadOrders,
+    reloadCart,
     setDefaultAddress,
+    setSelectedMerchantCoupon,
     submitOrder,
+    toggleFavorite,
     updateAddress,
     updateProfile
   ]);

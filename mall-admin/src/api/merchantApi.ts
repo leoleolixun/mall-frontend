@@ -211,6 +211,8 @@ export interface MerchantOrderItem {
   price: number;
   quantity: number;
   subtotal: number;
+  discount_amount: number;
+  payable_amount: number;
 }
 
 export interface MerchantOrder {
@@ -251,6 +253,7 @@ export interface MerchantShipment {
 
 export interface MerchantInventoryLog {
   id: number;
+  merchant_id: number;
   product_id: number;
   sku_id: number;
   product_name: string;
@@ -259,8 +262,27 @@ export interface MerchantInventoryLog {
   quantity: number;
   before_stock: number;
   after_stock: number;
+  reference_type: string;
+  reference_id: number;
+  operator_type: string;
+  operator_id: number;
   remark: string;
   created_at: string;
+}
+
+export interface MerchantRefund {
+  refund_no: string;
+  pay_channel: string;
+  amount: number;
+  status: number;
+  status_text: string;
+  transaction_id: string;
+  failure_reason: string;
+  last_error: string;
+  retry_count: number;
+  last_attempt_at?: string;
+  next_retry_at?: string;
+  refunded_at?: string;
 }
 
 export interface MerchantAfterSale {
@@ -282,8 +304,12 @@ export interface MerchantAfterSale {
   images: string[];
   refund_amount: number;
   reject_reason: string;
+  reviewed_at?: string;
+  cancelled_at?: string;
+  refunded_at?: string;
   created_at: string;
   updated_at: string;
+  refund?: MerchantRefund;
 }
 
 export interface MerchantCoupon {
@@ -325,6 +351,38 @@ export interface MerchantInventoryAlert {
   updated_at: string;
 }
 
+export interface MerchantSettlementEntry {
+  id: number;
+  entry_no: string;
+  merchant_id: number;
+  order_id?: number;
+  refund_id?: number;
+  entry_type: string;
+  amount: number;
+  available_at: string;
+  settlement_id?: number;
+  created_at: string;
+}
+
+export interface MerchantSettlement {
+  id: number;
+  settlement_no: string;
+  merchant_id: number;
+  period_start: string;
+  period_end: string;
+  gross_amount: number;
+  commission_amount: number;
+  refund_amount: number;
+  net_amount: number;
+  status: number;
+  status_text: string;
+  confirmed_at?: string;
+  paid_at?: string;
+  created_at: string;
+  updated_at: string;
+  entries?: MerchantSettlementEntry[];
+}
+
 export interface StoredMerchantAuth {
   accessToken: string;
   refreshToken: string;
@@ -347,6 +405,18 @@ export const clearMerchantAuth = () => {
   window.localStorage.removeItem(refreshTokenKey);
 };
 
+const merchantAuthExpiredEvent = "mall:merchant-auth-expired";
+
+const expireMerchantAuth = () => {
+  clearMerchantAuth();
+  window.dispatchEvent(new Event(merchantAuthExpiredEvent));
+};
+
+export const subscribeMerchantAuthExpired = (listener: () => void) => {
+  window.addEventListener(merchantAuthExpiredEvent, listener);
+  return () => window.removeEventListener(merchantAuthExpiredEvent, listener);
+};
+
 const getAccessToken = () => window.localStorage.getItem(accessTokenKey);
 const getRefreshToken = () => window.localStorage.getItem(refreshTokenKey);
 
@@ -358,7 +428,9 @@ const buildPath = (path: string, params?: Record<string, string | number | boole
   return url.pathname + url.search;
 };
 
-const refreshAccessToken = async () => {
+let refreshAccessTokenRequest: Promise<boolean> | undefined;
+
+const performAccessTokenRefresh = async () => {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return false;
 
@@ -369,11 +441,20 @@ const refreshAccessToken = async () => {
   });
   const payload = await response.json().catch(() => undefined) as ApiResponse<MerchantAuthResponse> | undefined;
   if (!response.ok || !payload || payload.code !== 0 || !payload.data) {
-    clearMerchantAuth();
+    expireMerchantAuth();
     return false;
   }
   storeMerchantAuth(payload.data);
   return true;
+};
+
+const refreshAccessToken = () => {
+  if (!refreshAccessTokenRequest) {
+    refreshAccessTokenRequest = performAccessTokenRefresh().finally(() => {
+      refreshAccessTokenRequest = undefined;
+    });
+  }
+  return refreshAccessTokenRequest;
 };
 
 async function apiRequest<T>(path: string, options: RequestInit = {}, retryOnUnauthorized = true): Promise<T> {
@@ -394,9 +475,19 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, retryOnUna
     && (response.status === 401 || payload?.code === 401)
     && await refreshAccessToken()
   ) {
-    return apiRequest<T>(path, options, false);
+    const retryOptions = path.endsWith("/auth/logout")
+      ? { ...options, body: JSON.stringify({ refresh_token: getRefreshToken() ?? "" }) }
+      : options;
+    return apiRequest<T>(path, retryOptions, false);
   }
   if (!response.ok || !payload || payload.code !== 0) {
+    if (
+      !path.includes("/auth/login")
+      && !path.includes("/auth/refresh")
+      && (response.status === 401 || payload?.code === 401)
+    ) {
+      expireMerchantAuth();
+    }
     throw new Error(payload?.message || `接口请求失败：${response.status}`);
   }
   return payload.data as T;
@@ -467,11 +558,12 @@ export const merchantApi = {
     return apiRequest<Record<string, never>>(`/merchant/categories/${id}`, { method: "DELETE" });
   },
 
-  orders(params: { page?: number; pageSize?: number; status?: number } = {}) {
+  orders(params: { page?: number; pageSize?: number; status?: number; keyword?: string } = {}) {
     return apiRequest<PageResponse<MerchantOrder>>(buildPath("/merchant/orders", {
       page: params.page ?? 1,
       page_size: params.pageSize ?? 20,
-      status: params.status ?? 0
+      status: params.status ?? 0,
+      keyword: params.keyword
     }));
   },
 
@@ -495,7 +587,7 @@ export const merchantApi = {
     return apiRequest<PageResponse<MerchantInventoryLog>>(buildPath("/merchant/inventory-logs", { page: params.page ?? 1, page_size: params.pageSize ?? 20, product_id: params.productId, sku_id: params.skuId, change_type: params.changeType }));
   },
 
-  adjustStock(skuId: number, payload: { stock: number; remark: string }) {
+  adjustStock(skuId: number, payload: { stock?: number; low_stock_threshold?: number; remark: string }) {
     return apiRequest<{ sku_id: number; stock: number }>(`/merchant/inventory/skus/${skuId}/stock`, { method: "PUT", body: JSON.stringify(payload) });
   },
 
@@ -524,6 +616,7 @@ export const merchantApi = {
     return apiRequest<PageResponse<MerchantAfterSale>>(buildPath("/merchant/after-sales", { page: params.page ?? 1, page_size: params.pageSize ?? 20, status: params.status ?? 0 }));
   },
   approveAfterSale(id: number) { return apiRequest<MerchantAfterSale>(`/merchant/after-sales/${id}/approve`, { method: "POST" }); },
+  syncAfterSaleRefund(id: number) { return apiRequest<MerchantAfterSale>(`/merchant/after-sales/${id}/refund/sync`, { method: "POST" }); },
   rejectAfterSale(id: number, reason: string) { return apiRequest<MerchantAfterSale>(`/merchant/after-sales/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) }); },
 
   coupons(params: { page?: number; pageSize?: number; status?: number } = {}) {
@@ -531,6 +624,26 @@ export const merchantApi = {
   },
   createCoupon(payload: MerchantCouponRequest) { return apiRequest<MerchantCoupon>("/merchant/coupons", { method: "POST", body: JSON.stringify(payload) }); },
   updateCoupon(id: number, payload: MerchantCouponRequest) { return apiRequest<MerchantCoupon>(`/merchant/coupons/${id}`, { method: "PUT", body: JSON.stringify(payload) }); },
+
+  settlementEntries(params: { page?: number; pageSize?: number; entryType?: string } = {}) {
+    return apiRequest<PageResponse<MerchantSettlementEntry>>(buildPath("/merchant/settlement-entries", {
+      page: params.page ?? 1,
+      page_size: params.pageSize ?? 20,
+      entry_type: params.entryType
+    }));
+  },
+
+  settlements(params: { page?: number; pageSize?: number; status?: number } = {}) {
+    return apiRequest<PageResponse<MerchantSettlement>>(buildPath("/merchant/settlements", {
+      page: params.page ?? 1,
+      page_size: params.pageSize ?? 20,
+      status: params.status ?? 0
+    }));
+  },
+
+  settlementDetail(id: number) {
+    return apiRequest<MerchantSettlement>(`/merchant/settlements/${id}`);
+  },
 
   accounts(params: { page?: number; pageSize?: number; keyword?: string; role?: string; status?: number } = {}) {
     return apiRequest<PageResponse<MerchantAccount>>(buildPath("/merchant/accounts", {

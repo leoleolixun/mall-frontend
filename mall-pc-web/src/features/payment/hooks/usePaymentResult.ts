@@ -3,8 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PaymentResponse } from "@/api/client";
 import { paymentApi } from "@/features/payment/api/paymentApi";
 
-const AUTO_CHECK_LIMIT = 8;
-const AUTO_CHECK_INTERVAL_MS = 2_000;
+const AUTO_CHECK_DELAYS_MS = [1_500, 2_000, 3_000, 5_000, 8_000, 10_000, 10_000, 10_000];
 
 const resolvePaymentNo = (): string => {
   const searchParams = new URLSearchParams(window.location.search);
@@ -44,7 +43,10 @@ export const usePaymentResult = (): PaymentResultState => {
       setError("");
 
       try {
-        const latestPayment = await paymentApi.detail(paymentNo);
+        const detail = await paymentApi.detail(paymentNo);
+        const latestPayment = detail.status === 1 && detail.pay_channel === "alipay"
+          ? await paymentApi.sync(paymentNo)
+          : detail;
         if (!active) {
           return;
         }
@@ -55,8 +57,8 @@ export const usePaymentResult = (): PaymentResultState => {
           return;
         }
 
-        if (attempt + 1 < AUTO_CHECK_LIMIT) {
-          timer = window.setTimeout(() => void check(attempt + 1), AUTO_CHECK_INTERVAL_MS);
+        if (attempt < AUTO_CHECK_DELAYS_MS.length) {
+          timer = window.setTimeout(() => void check(attempt + 1), AUTO_CHECK_DELAYS_MS[attempt]);
         }
       } catch (requestError) {
         if (active) {

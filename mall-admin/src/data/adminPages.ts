@@ -129,7 +129,7 @@ export const adminGroups: AdminGroup[] = [
     title: "02 商品中心",
     subtitle: "商品、分类、品牌、库存和审核",
     icon: Boxes,
-    pageIds: ["products", "categories", "brands", "inventory", "product-audit"]
+    pageIds: ["products", "categories", "inventory", "inventory-logs"]
   },
   {
     id: "orders",
@@ -157,7 +157,7 @@ export const adminGroups: AdminGroup[] = [
     title: "06 财务结算",
     subtitle: "支付、退款、结算和对账",
     icon: CircleDollarSign,
-    pageIds: ["payment-flow", "refund-flow", "merchant-settlements", "reconciliation"]
+    pageIds: ["merchant-settlements", "settlement-entries"]
   },
   {
     id: "group07",

@@ -39,13 +39,43 @@ const PasswordInput: React.FC<PasswordInputProps> = ({ value, onChange }) => {
 };
 
 export const AuthPage: React.FC<{
-  onLogin: (username: string, password: string) => void;
-  onRegister: (username: string, password: string, nickname: string) => void;
+  onLogin: (username: string, password: string) => Promise<void>;
+  onRegister: (username: string, password: string, nickname: string) => Promise<void>;
 }> = ({ onLogin, onRegister }) => {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [nickname, setNickname] = useState("");
+  const [formError, setFormError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const switchMode = (nextMode: "login" | "register"): void => {
+    setMode(nextMode);
+    setFormError("");
+  };
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+    const normalizedUsername = username.trim();
+    const normalizedNickname = nickname.trim();
+    if (!normalizedUsername || !password.trim()) {
+      setFormError("请输入用户名和密码");
+      return;
+    }
+    if (mode === "register" && password.trim().length < 6) {
+      setFormError("密码长度不能少于 6 位");
+      return;
+    }
+
+    setFormError("");
+    setSubmitting(true);
+    if (mode === "login") {
+      await onLogin(normalizedUsername, password);
+    } else {
+      await onRegister(normalizedUsername, password, normalizedNickname);
+    }
+    setSubmitting(false);
+  };
 
   return (
   <div className="auth-layout">
@@ -58,31 +88,29 @@ export const AuthPage: React.FC<{
         {authCopy.benefits.map((item) => <span key={item}>{item}</span>)}
       </div>
     </section>
-    <section className="panel login-card">
+    <form className="panel login-card" onSubmit={(event) => void submit(event)}>
       <div className="auth-tabs">
-        <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>账号登录</button>
-        <button type="button" className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>快速注册</button>
+        <button disabled={submitting} type="button" className={mode === "login" ? "active" : ""} onClick={() => switchMode("login")}>账号登录</button>
+        <button disabled={submitting} type="button" className={mode === "register" ? "active" : ""} onClick={() => switchMode("register")}>快速注册</button>
       </div>
       {mode === "login" ? (
         <>
           <input placeholder="请输入用户名" value={username} onChange={(event) => setUsername(event.target.value)} />
           <PasswordInput value={password} onChange={setPassword} />
-          <button className="primary-button solid" onClick={() => onLogin(username, password)}>登录</button>
-          <div className="auth-secondary-actions">
-            <button type="button" className="plain-button">验证码登录</button>
-            <button type="button" className="plain-button">微信扫码登录</button>
-          </div>
+          {formError ? <p className="auth-form-error">{formError}</p> : null}
+          <button className="primary-button solid" disabled={submitting} type="submit">{submitting ? "登录中" : "登录"}</button>
         </>
       ) : (
         <>
           <input placeholder="用户名 / 手机号" value={username} onChange={(event) => setUsername(event.target.value)} />
           <input placeholder="昵称" value={nickname} onChange={(event) => setNickname(event.target.value)} />
           <PasswordInput value={password} onChange={setPassword} />
-          <button className="primary-button solid" onClick={() => onRegister(username, password, nickname)}>创建账号</button>
-          <button type="button" className="plain-button" onClick={() => setMode("login")}>已有账号，去登录</button>
+          {formError ? <p className="auth-form-error">{formError}</p> : null}
+          <button className="primary-button solid" disabled={submitting} type="submit">{submitting ? "创建中" : "创建账号"}</button>
+          <button type="button" className="plain-button" disabled={submitting} onClick={() => switchMode("login")}>已有账号，去登录</button>
         </>
       )}
-    </section>
+    </form>
   </div>
   );
 };

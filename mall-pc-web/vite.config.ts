@@ -1,8 +1,14 @@
-import { defineConfig } from "vite";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    environment: "jsdom",
+    exclude: [...configDefaults.exclude, "tests/e2e/**"],
+    setupFiles: "./src/test/setup.ts",
+    restoreMocks: true
+  },
   resolve: {
     alias: {
       "@": new URL("./src", import.meta.url).pathname,

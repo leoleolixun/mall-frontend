@@ -1,0 +1,10 @@
+# Add these locations inside the HTTPS server block for mall.leedu.ac.cn.
+location = /mobile {
+    return 301 /mobile/;
+}
+
+location ^~ /mobile/ {
+    alias /opt/mall/mobile/dist/;
+    index index.html;
+    try_files $uri $uri/ =404;
+}

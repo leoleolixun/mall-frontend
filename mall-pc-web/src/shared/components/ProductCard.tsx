@@ -12,7 +12,7 @@ export const ProductCard: React.FC<{
 }> = ({ product, compact = false, onAdd, onOpen }) => (
   <article className={compact ? "product-card compact" : "product-card"}>
     <button className="visual-button" onClick={() => onOpen?.(product)}>
-      <ProductVisual compact={compact} />
+      <ProductVisual alt={product.name} compact={compact} src={product.cover} />
     </button>
     <div className="card-meta">
       <button onClick={() => onOpen?.(product)}>{product.name}</button>
@@ -25,4 +25,3 @@ export const ProductCard: React.FC<{
 );
 
 export default ProductCard;
-

@@ -40,7 +40,7 @@ const generatedNames = [
   "PC Web / 订单空状态",
   "PC Web / 订单取消",
   "PC Web / 退款结果",
-  "PC Web / 个人中心订单地址",
+  "PC Web / 个人中心",
   "PC Web / 个人资料",
   "PC Web / 地址管理",
   "PC Web / 地址空状态",
@@ -167,13 +167,13 @@ function header(parent, active, ids) {
   node.strokes = [paint(colors.line)];
   node.strokeWeight = 1;
   text(node, "Mall", 64, 22, 120, 26, "Bold", colors.brand, ids);
-  ["首页", "分类", "新品", "热卖", "会员"].forEach((item, index) => {
+  ["首页", "分类", "新品", "热卖", "个人中心"].forEach((item, index) => {
     text(
       node,
       item,
       220 + index * 72,
       26,
-      60,
+      item === "个人中心" ? 84 : 60,
       14,
       item === active ? "Semi Bold" : "Regular",
       item === active ? colors.brand : colors.ink,
@@ -216,6 +216,54 @@ function table(parent, name, x, y, width, heads, rows, ids) {
     });
   });
   return node;
+}
+
+const personalCenterMenu = [
+  ["总览", "PC Web / 个人中心"],
+  ["我的订单", "PC Web / 订单列表"],
+  ["个人资料", "PC Web / 个人资料"],
+  ["地址管理", "PC Web / 地址管理"],
+  ["优惠券", "PC Web / 优惠券中心"],
+  ["收藏商品", "PC Web / 收藏夹"],
+  ["浏览足迹", "PC Web / 浏览足迹"],
+  ["评价晒单", "PC Web / 评价晒单"],
+  ["会员积分", "PC Web / 会员积分"],
+  ["账号安全", "PC Web / 账号安全"],
+  ["隐私设置", "PC Web / 隐私设置"],
+  ["消息中心", "PC Web / 消息中心"],
+  ["售后服务", "PC Web / 售后列表"]
+];
+
+function personalCenterSidebar(parent, activeLabel, ids) {
+  const sidebar = box(parent, "Personal center sidebar", 64, 120, 220, 820, colors.white, 8, ids);
+  text(sidebar, "个人中心", 24, 24, 140, 22, "Bold", colors.ink, ids);
+  text(sidebar, "我的服务", 24, 56, 120, 13, "Regular", colors.muted, ids);
+  personalCenterMenu.forEach(([label, target], index) => {
+    const active = label === activeLabel;
+    const item = frame(sidebar, "Personal nav / " + label + " -> " + target, 24, 84 + index * 52, 172, 34, active ? colors.brand : colors.soft, 17, ids);
+    text(item, label, 16, 8, 110, 13, active ? "Semi Bold" : "Regular", active ? colors.white : colors.ink, ids);
+    text(item, "›", 146, 7, 14, 14, "Semi Bold", active ? colors.white : colors.muted, ids);
+  });
+  return sidebar;
+}
+
+function applyPersonalCenterLayout(parent, activeLabel, ids, alreadyOffset) {
+  parent.children.slice().forEach((child) => {
+    if (child.name === "Header" || child.name === "Personal center sidebar") return;
+    if (child.name === "Account sidebar") {
+      child.remove();
+      return;
+    }
+    if (!alreadyOffset && child.y >= 100) {
+      if (child.x < 700) {
+        child.x += 256;
+      }
+      if (child.x + child.width > 1376) {
+        child.resize(Math.max(260, 1376 - child.x), child.height);
+      }
+    }
+  });
+  personalCenterSidebar(parent, activeLabel, ids);
 }
 
 function miniProduct(parent, name, price, x, y, ids) {
@@ -721,7 +769,7 @@ function buildCart(page, x, y, ids) {
 
 function buildAuth(page, x, y, ids) {
   const auth = screen(page, "PC Web / 登录注册", x, y, ids);
-  header(auth, "会员", ids);
+  header(auth, "个人中心", ids);
 
   const visual = frame(auth, "Auth visual", 64, 130, 650, 800, colors.warm, 24, ids);
   text(visual, "欢迎回来", 64, 112, 360, 48, "Bold", colors.brand, ids);
@@ -810,7 +858,7 @@ function buildPickupStore(page, x, y, ids) {
 
 function buildOrderCancel(page, x, y, ids) {
   const cancel = screen(page, "PC Web / 订单取消", x, y, ids);
-  header(cancel, "会员", ids);
+  header(cancel, "个人中心", ids);
   text(cancel, "取消订单", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const form = box(cancel, "Cancel order form", 320, 180, 800, 560, colors.white, 12, ids);
@@ -834,7 +882,7 @@ function buildOrderCancel(page, x, y, ids) {
 
 function buildRefundResult(page, x, y, ids) {
   const refund = screen(page, "PC Web / 退款结果", x, y, ids);
-  header(refund, "会员", ids);
+  header(refund, "个人中心", ids);
 
   const card = box(refund, "Refund success card", 320, 150, 800, 390, colors.white, 16, ids);
   frame(card, "Refund icon", 360, 48, 80, 80, colors.warm, 40, ids);
@@ -879,7 +927,7 @@ function buildNotFound(page, x, y, ids) {
 
 function buildPaymentResult(page, x, y, ids) {
   const result = screen(page, "PC Web / 支付结果", x, y, ids);
-  header(result, "会员", ids);
+  header(result, "个人中心", ids);
 
   const card = box(result, "Payment success card", 320, 140, 800, 360, colors.white, 16, ids);
   frame(card, "Success icon", 360, 48, 80, 80, colors.warm, 40, ids);
@@ -907,7 +955,7 @@ function buildPaymentResult(page, x, y, ids) {
 
 function buildPaymentFailed(page, x, y, ids) {
   const failed = screen(page, "PC Web / 支付失败", x, y, ids);
-  header(failed, "会员", ids);
+  header(failed, "个人中心", ids);
 
   const card = box(failed, "Payment failed card", 320, 150, 800, 390, colors.white, 16, ids);
   frame(card, "Failed icon", 360, 48, 80, 80, colors.soft, 40, ids);
@@ -929,7 +977,7 @@ function buildPaymentFailed(page, x, y, ids) {
 
 function buildOrderList(page, x, y, ids) {
   const orders = screen(page, "PC Web / 订单列表", x, y, ids);
-  header(orders, "会员", ids);
+  header(orders, "个人中心", ids);
   text(orders, "我的订单", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const tabs = box(orders, "Order status tabs", 64, 182, 1312, 64, colors.white, 8, ids);
@@ -954,12 +1002,13 @@ function buildOrderList(page, x, y, ids) {
     button(card, index === 1 ? "去支付" : "查看详情", 1120, 58, 104, index === 1, ids);
   });
 
+  applyPersonalCenterLayout(orders, "我的订单", ids);
   return orders;
 }
 
 function buildOrderEmpty(page, x, y, ids) {
   const empty = screen(page, "PC Web / 订单空状态", x, y, ids);
-  header(empty, "会员", ids);
+  header(empty, "个人中心", ids);
   text(empty, "我的订单", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const tabs = box(empty, "Empty order tabs", 64, 180, 1312, 64, colors.white, 8, ids);
@@ -978,16 +1027,17 @@ function buildOrderEmpty(page, x, y, ids) {
     compactProduct(recommend, name, price, 24 + index * 300, 86, ids);
   });
 
+  applyPersonalCenterLayout(empty, "我的订单", ids);
   return empty;
 }
 
 function buildAccount(page, x, y, ids) {
-  const account = screen(page, "PC Web / 个人中心订单地址", x, y, ids);
-  header(account, "会员", ids);
+  const account = screen(page, "PC Web / 个人中心", x, y, ids);
+  header(account, "个人中心", ids);
 
   const sidebar = box(account, "Account sidebar", 64, 120, 220, 820, colors.white, 8, ids);
   text(sidebar, "个人中心", 24, 24, 140, 22, "Bold", colors.ink, ids);
-  ["我的订单", "地址管理", "优惠券", "收藏商品", "账号安全", "售后服务"].forEach((item, index) => {
+  ["总览", "我的订单", "地址管理", "优惠券", "收藏商品", "账号安全", "消息中心", "售后服务"].forEach((item, index) => {
     chip(sidebar, item, 24, 78 + index * 48, 156, index === 0, ids);
   });
 
@@ -998,6 +1048,7 @@ function buildAccount(page, x, y, ids) {
 
   const orders = box(account, "Order list", 320, 284, 680, 426, colors.white, 8, ids);
   text(orders, "最近订单", 24, 22, 180, 20, "Bold", colors.ink, ids);
+  button(orders, "查看全部订单", 520, 16, 112, false, ids);
   table(orders, "Orders table", 24, 66, 632, ["订单号", "金额", "状态", "操作"], [
     ["202607040001", "¥714", "待支付", "去支付"],
     ["202607030012", "¥128", "待发货", "查看"],
@@ -1006,18 +1057,20 @@ function buildAccount(page, x, y, ids) {
 
   const addresses = box(account, "Address manager", 1032, 284, 344, 426, colors.white, 8, ids);
   text(addresses, "常用地址", 24, 22, 160, 20, "Bold", colors.ink, ids);
-  button(addresses, "新增地址", 224, 18, 96, true, ids);
+  button(addresses, "管理地址", 118, 18, 90, false, ids);
+  button(addresses, "新增地址", 222, 18, 98, true, ids);
   ["上海市浦东新区 XX 路 88 号", "杭州市西湖区 XX 街 21 号", "北京市朝阳区 XX 园 9 号"].forEach((item, index) => {
     const address = box(addresses, "Address item", 24, 70 + index * 98, 296, 76, index === 0 ? colors.warm : colors.soft, 8, ids);
     text(address, item, 14, 24, 230, 13, "Regular", colors.muted, ids);
   });
 
+  applyPersonalCenterLayout(account, "总览", ids, true);
   return account;
 }
 
 function buildAddressManager(page, x, y, ids) {
   const addressPage = screen(page, "PC Web / 地址管理", x, y, ids);
-  header(addressPage, "会员", ids);
+  header(addressPage, "个人中心", ids);
   text(addressPage, "地址管理", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const list = box(addressPage, "Address list full", 64, 182, 720, 750, colors.white, 8, ids);
@@ -1047,12 +1100,13 @@ function buildAddressManager(page, x, y, ids) {
   button(form, "保存地址", 24, 472, 160, true, ids);
   button(form, "取消", 208, 472, 120, false, ids);
 
+  applyPersonalCenterLayout(addressPage, "地址管理", ids);
   return addressPage;
 }
 
 function buildAddressEmpty(page, x, y, ids) {
   const empty = screen(page, "PC Web / 地址空状态", x, y, ids);
-  header(empty, "会员", ids);
+  header(empty, "个人中心", ids);
   text(empty, "地址管理", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const state = box(empty, "Address empty state", 320, 190, 800, 360, colors.white, 16, ids);
@@ -1070,12 +1124,13 @@ function buildAddressEmpty(page, x, y, ids) {
   input(form, "详细地址", 24, 158, 520, ids);
   button(form, "保存地址", 1120, 158, 120, true, ids);
 
+  applyPersonalCenterLayout(empty, "地址管理", ids);
   return empty;
 }
 
 function buildProfile(page, x, y, ids) {
   const profile = screen(page, "PC Web / 个人资料", x, y, ids);
-  header(profile, "会员", ids);
+  header(profile, "个人中心", ids);
   text(profile, "个人资料", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const form = box(profile, "Profile form", 64, 180, 760, 720, colors.white, 8, ids);
@@ -1103,12 +1158,13 @@ function buildProfile(page, x, y, ids) {
     text(row, status, 340, 16, 70, 14, "Semi Bold", status === "未完成" ? colors.brand : colors.muted, ids);
   });
 
+  applyPersonalCenterLayout(profile, "个人资料", ids);
   return profile;
 }
 
 function buildBrowsingHistory(page, x, y, ids) {
   const history = screen(page, "PC Web / 浏览足迹", x, y, ids);
-  header(history, "会员", ids);
+  header(history, "个人中心", ids);
   text(history, "浏览足迹", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const toolbar = box(history, "History toolbar", 64, 180, 1312, 64, colors.white, 8, ids);
@@ -1122,12 +1178,13 @@ function buildBrowsingHistory(page, x, y, ids) {
     miniProduct(grid, name, price, 24 + (index % 4) * 310, 78 + Math.floor(index / 4) * 282, ids);
   });
 
+  applyPersonalCenterLayout(history, "浏览足迹", ids);
   return history;
 }
 
 function buildBindPhone(page, x, y, ids) {
   const bind = screen(page, "PC Web / 绑定手机", x, y, ids);
-  header(bind, "会员", ids);
+  header(bind, "个人中心", ids);
   text(bind, "绑定手机", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const card = box(bind, "Bind phone card", 420, 180, 600, 560, colors.white, 16, ids);
@@ -1147,12 +1204,13 @@ function buildBindPhone(page, x, y, ids) {
   text(tips, "安全提示", 24, 24, 160, 20, "Bold", colors.brand, ids);
   text(tips, "更换手机号后，登录、支付验证、订单通知和售后通知都会发送到新号码。", 24, 72, 620, 15, "Regular", colors.ink, ids);
 
+  applyPersonalCenterLayout(bind, "账号安全", ids);
   return bind;
 }
 
 function buildResetPassword(page, x, y, ids) {
   const reset = screen(page, "PC Web / 重置密码", x, y, ids);
-  header(reset, "会员", ids);
+  header(reset, "个人中心", ids);
   text(reset, "重置密码", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const card = box(reset, "Reset password card", 420, 180, 600, 540, colors.white, 16, ids);
@@ -1165,12 +1223,13 @@ function buildResetPassword(page, x, y, ids) {
   button(card, "提交修改", 40, 416, 140, true, ids);
   button(card, "返回安全中心", 204, 416, 140, false, ids);
 
+  applyPersonalCenterLayout(reset, "账号安全", ids);
   return reset;
 }
 
 function buildNotificationPreferences(page, x, y, ids) {
   const prefs = screen(page, "PC Web / 通知偏好", x, y, ids);
-  header(prefs, "会员", ids);
+  header(prefs, "个人中心", ids);
   text(prefs, "通知偏好", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const channels = box(prefs, "Notification channels", 64, 180, 620, 720, colors.white, 8, ids);
@@ -1192,12 +1251,13 @@ function buildNotificationPreferences(page, x, y, ids) {
   });
   button(types, "保存设置", 24, 628, 140, true, ids);
 
+  applyPersonalCenterLayout(prefs, "消息中心", ids);
   return prefs;
 }
 
 function buildPrivacySettings(page, x, y, ids) {
   const privacy = screen(page, "PC Web / 隐私设置", x, y, ids);
-  header(privacy, "会员", ids);
+  header(privacy, "个人中心", ids);
   text(privacy, "隐私设置", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const visibility = box(privacy, "Privacy visibility", 64, 180, 620, 720, colors.white, 8, ids);
@@ -1219,12 +1279,13 @@ function buildPrivacySettings(page, x, y, ids) {
   });
   button(data, "保存隐私设置", 24, 620, 150, true, ids);
 
+  applyPersonalCenterLayout(privacy, "隐私设置", ids);
   return privacy;
 }
 
 function buildCouponCenter(page, x, y, ids) {
   const coupons = screen(page, "PC Web / 优惠券中心", x, y, ids);
-  header(coupons, "会员", ids);
+  header(coupons, "个人中心", ids);
   text(coupons, "优惠券中心", 64, 118, 260, 30, "Bold", colors.ink, ids);
 
   const hero = frame(coupons, "Coupon hero", 64, 180, 1312, 160, colors.warm, 14, ids);
@@ -1242,12 +1303,13 @@ function buildCouponCenter(page, x, y, ids) {
     button(card, "立即领取", 244, 118, 104, true, ids);
   });
 
+  applyPersonalCenterLayout(coupons, "优惠券", ids);
   return coupons;
 }
 
 function buildFavorites(page, x, y, ids) {
   const favorites = screen(page, "PC Web / 收藏夹", x, y, ids);
-  header(favorites, "会员", ids);
+  header(favorites, "个人中心", ids);
   text(favorites, "我的收藏", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const toolbar = box(favorites, "Favorites toolbar", 64, 182, 1312, 64, colors.white, 8, ids);
@@ -1260,12 +1322,13 @@ function buildFavorites(page, x, y, ids) {
     miniProduct(grid, name, price, 24 + (index % 4) * 310, 28 + Math.floor(index / 4) * 290, ids);
   });
 
+  applyPersonalCenterLayout(favorites, "收藏商品", ids);
   return favorites;
 }
 
 function buildFavoritesEmpty(page, x, y, ids) {
   const empty = screen(page, "PC Web / 收藏空状态", x, y, ids);
-  header(empty, "会员", ids);
+  header(empty, "个人中心", ids);
   text(empty, "我的收藏", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const state = box(empty, "Favorites empty state", 320, 190, 800, 340, colors.white, 16, ids);
@@ -1282,12 +1345,13 @@ function buildFavoritesEmpty(page, x, y, ids) {
     text(tile, item, 24, 28, 110, 16, "Semi Bold", index === 0 ? colors.brand : colors.ink, ids);
   });
 
+  applyPersonalCenterLayout(empty, "收藏商品", ids);
   return empty;
 }
 
 function buildReview(page, x, y, ids) {
   const review = screen(page, "PC Web / 评价晒单", x, y, ids);
-  header(review, "会员", ids);
+  header(review, "个人中心", ids);
   text(review, "评价晒单", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const goods = box(review, "Review goods", 64, 182, 500, 250, colors.white, 8, ids);
@@ -1321,12 +1385,13 @@ function buildReview(page, x, y, ids) {
     ["洁面乳", "5 星", "2026-06-20"]
   ], ids);
 
+  applyPersonalCenterLayout(review, "评价晒单", ids);
   return review;
 }
 
 function buildReviewSuccess(page, x, y, ids) {
   const success = screen(page, "PC Web / 评价成功", x, y, ids);
-  header(success, "会员", ids);
+  header(success, "个人中心", ids);
 
   const card = box(success, "Review success card", 320, 150, 800, 390, colors.white, 16, ids);
   frame(card, "Review success icon", 360, 48, 80, 80, colors.warm, 40, ids);
@@ -1343,12 +1408,13 @@ function buildReviewSuccess(page, x, y, ids) {
     ["儿童保温杯", "202606280011", "2026-06-28", "去评价"]
   ], ids);
 
+  applyPersonalCenterLayout(success, "评价晒单", ids);
   return success;
 }
 
 function buildMemberPoints(page, x, y, ids) {
   const member = screen(page, "PC Web / 会员积分", x, y, ids);
-  header(member, "会员", ids);
+  header(member, "个人中心", ids);
   text(member, "会员积分", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const overview = frame(member, "Member points hero", 64, 180, 1312, 210, colors.warm, 16, ids);
@@ -1376,12 +1442,13 @@ function buildMemberPoints(page, x, y, ids) {
     ["2026-07-01", "每日签到", "+5"]
   ], ids);
 
+  applyPersonalCenterLayout(member, "会员积分", ids);
   return member;
 }
 
 function buildAccountSecurity(page, x, y, ids) {
   const security = screen(page, "PC Web / 账号安全", x, y, ids);
-  header(security, "会员", ids);
+  header(security, "个人中心", ids);
   text(security, "账号安全", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const summary = box(security, "Security summary", 64, 180, 1312, 132, colors.white, 8, ids);
@@ -1405,12 +1472,13 @@ function buildAccountSecurity(page, x, y, ids) {
     ["07-02", "未知设备", "拦截"]
   ], ids);
 
+  applyPersonalCenterLayout(security, "账号安全", ids);
   return security;
 }
 
 function buildRealNameVerification(page, x, y, ids) {
   const verify = screen(page, "PC Web / 实名认证", x, y, ids);
-  header(verify, "会员", ids);
+  header(verify, "个人中心", ids);
   text(verify, "实名认证", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const form = box(verify, "Real-name form", 64, 180, 760, 700, colors.white, 8, ids);
@@ -1433,12 +1501,13 @@ function buildRealNameVerification(page, x, y, ids) {
     text(row, item, 18, 20, 360, 14, "Regular", colors.muted, ids);
   });
 
+  applyPersonalCenterLayout(verify, "账号安全", ids);
   return verify;
 }
 
 function buildPayPassword(page, x, y, ids) {
   const payPwd = screen(page, "PC Web / 设置支付密码", x, y, ids);
-  header(payPwd, "会员", ids);
+  header(payPwd, "个人中心", ids);
   text(payPwd, "设置支付密码", 64, 118, 260, 30, "Bold", colors.ink, ids);
 
   const card = box(payPwd, "Pay password card", 420, 180, 600, 560, colors.white, 16, ids);
@@ -1453,12 +1522,13 @@ function buildPayPassword(page, x, y, ids) {
   button(card, "确认设置", 40, 472, 140, true, ids);
   button(card, "返回安全中心", 204, 472, 140, false, ids);
 
+  applyPersonalCenterLayout(payPwd, "账号安全", ids);
   return payPwd;
 }
 
 function buildMessageCenter(page, x, y, ids) {
   const messages = screen(page, "PC Web / 消息中心", x, y, ids);
-  header(messages, "会员", ids);
+  header(messages, "个人中心", ids);
   text(messages, "消息中心", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const side = box(messages, "Message categories", 64, 180, 240, 720, colors.white, 8, ids);
@@ -1467,6 +1537,7 @@ function buildMessageCenter(page, x, y, ids) {
 
   const list = box(messages, "Message list", 344, 180, 1032, 720, colors.white, 8, ids);
   text(list, "全部消息", 24, 24, 160, 20, "Bold", colors.ink, ids);
+  button(list, "通知设置", 762, 20, 104, false, ids);
   button(list, "全部已读", 884, 20, 104, false, ids);
   [["订单已支付成功", "订单 202607040001 支付成功，商家正在处理中。"], ["优惠券到账", "你有一张满 599 减 60 优惠券即将过期。"], ["售后审核通过", "退货退款申请已通过，请及时寄回商品。"], ["系统维护公告", "平台将在凌晨进行短时维护，不影响下单。"]].forEach(([title, desc], index) => {
     const item = box(list, "Message item / " + title, 24, 78 + index * 126, 984, 96, index === 0 ? colors.warm : colors.white, 8, ids);
@@ -1475,12 +1546,13 @@ function buildMessageCenter(page, x, y, ids) {
     text(item, "2026-07-0" + (4 - index), 830, 20, 110, 13, "Regular", colors.muted, ids);
   });
 
+  applyPersonalCenterLayout(messages, "消息中心", ids);
   return messages;
 }
 
 function buildLogisticsTracking(page, x, y, ids) {
   const logistics = screen(page, "PC Web / 物流跟踪", x, y, ids);
-  header(logistics, "会员", ids);
+  header(logistics, "个人中心", ids);
   text(logistics, "物流跟踪", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const summary = box(logistics, "Logistics summary", 64, 180, 1312, 150, colors.warm, 10, ids);
@@ -1505,12 +1577,13 @@ function buildLogisticsTracking(page, x, y, ids) {
   text(goods, "收货地址", 24, 302, 120, 16, "Semi Bold", colors.ink, ids);
   text(goods, "李先生 138****8888\n上海市浦东新区 XX 路 88 号", 24, 336, 360, 14, "Regular", colors.muted, ids);
 
+  applyPersonalCenterLayout(logistics, "我的订单", ids);
   return logistics;
 }
 
 function buildOrderDetail(page, x, y, ids) {
   const order = screen(page, "PC Web / 订单详情", x, y, ids);
-  header(order, "会员", ids);
+  header(order, "个人中心", ids);
   text(order, "订单详情", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const status = box(order, "Order status", 64, 178, 1312, 150, colors.warm, 10, ids);
@@ -1547,12 +1620,13 @@ function buildOrderDetail(page, x, y, ids) {
     text(summary, value, 390, 76 + index * 44, 100, 14, index === 3 ? "Bold" : "Medium", index === 3 ? colors.brand : colors.ink, ids);
   });
 
+  applyPersonalCenterLayout(order, "我的订单", ids);
   return order;
 }
 
 function buildAfterSale(page, x, y, ids) {
   const afterSale = screen(page, "PC Web / 售后申请", x, y, ids);
-  header(afterSale, "会员", ids);
+  header(afterSale, "个人中心", ids);
   text(afterSale, "申请售后", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const form = box(afterSale, "After-sale form", 64, 180, 820, 760, colors.white, 8, ids);
@@ -1586,12 +1660,13 @@ function buildAfterSale(page, x, y, ids) {
   });
   text(guide, "说明：生鲜、定制商品等特殊品类按平台规则处理。", 24, 560, 330, 14, "Regular", colors.muted, ids);
 
+  applyPersonalCenterLayout(afterSale, "售后服务", ids);
   return afterSale;
 }
 
 function buildAfterSaleList(page, x, y, ids) {
   const listPage = screen(page, "PC Web / 售后列表", x, y, ids);
-  header(listPage, "会员", ids);
+  header(listPage, "个人中心", ids);
   text(listPage, "售后列表", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const tabs = box(listPage, "After-sale tabs", 64, 180, 1312, 64, colors.white, 8, ids);
@@ -1614,12 +1689,13 @@ function buildAfterSaleList(page, x, y, ids) {
     button(card, "查看详情", 1148, 56, 92, index === 0, ids);
   });
 
+  applyPersonalCenterLayout(listPage, "售后服务", ids);
   return listPage;
 }
 
 function buildAfterSaleDetail(page, x, y, ids) {
   const detail = screen(page, "PC Web / 售后详情", x, y, ids);
-  header(detail, "会员", ids);
+  header(detail, "个人中心", ids);
   text(detail, "售后详情", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const status = box(detail, "After-sale status", 64, 180, 1312, 150, colors.warm, 10, ids);
@@ -1644,12 +1720,13 @@ function buildAfterSaleDetail(page, x, y, ids) {
     text(info, value, 150, 190 + index * 58, 360, 14, "Medium", colors.ink, ids);
   });
 
+  applyPersonalCenterLayout(detail, "售后服务", ids);
   return detail;
 }
 
 function buildReturnLogistics(page, x, y, ids) {
   const returnShip = screen(page, "PC Web / 退货物流填写", x, y, ids);
-  header(returnShip, "会员", ids);
+  header(returnShip, "个人中心", ids);
   text(returnShip, "填写退货物流", 64, 118, 260, 30, "Bold", colors.ink, ids);
 
   const status = box(returnShip, "Return logistics status", 64, 180, 1312, 120, colors.warm, 10, ids);
@@ -1676,12 +1753,13 @@ function buildReturnLogistics(page, x, y, ids) {
     text(row, item, 18, 18, 360, 14, "Regular", colors.muted, ids);
   });
 
+  applyPersonalCenterLayout(returnShip, "售后服务", ids);
   return returnShip;
 }
 
 function buildSupportTickets(page, x, y, ids) {
   const tickets = screen(page, "PC Web / 客服工单", x, y, ids);
-  header(tickets, "会员", ids);
+  header(tickets, "个人中心", ids);
   text(tickets, "客服工单", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const sidebar = box(tickets, "Ticket categories", 64, 180, 260, 720, colors.white, 8, ids);
@@ -1712,7 +1790,7 @@ function buildSupportTickets(page, x, y, ids) {
 
 function buildTicketDetail(page, x, y, ids) {
   const detail = screen(page, "PC Web / 工单详情", x, y, ids);
-  header(detail, "会员", ids);
+  header(detail, "个人中心", ids);
   text(detail, "工单详情", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const status = box(detail, "Ticket status", 64, 180, 1312, 132, colors.warm, 10, ids);
@@ -1749,7 +1827,7 @@ function buildTicketDetail(page, x, y, ids) {
 
 function buildInvoiceManager(page, x, y, ids) {
   const invoice = screen(page, "PC Web / 发票管理", x, y, ids);
-  header(invoice, "会员", ids);
+  header(invoice, "个人中心", ids);
   text(invoice, "发票管理", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const apply = box(invoice, "Invoice apply panel", 64, 180, 600, 720, colors.white, 8, ids);
@@ -1781,7 +1859,7 @@ function buildInvoiceManager(page, x, y, ids) {
 
 function buildInvoiceDetail(page, x, y, ids) {
   const invoice = screen(page, "PC Web / 发票详情", x, y, ids);
-  header(invoice, "会员", ids);
+  header(invoice, "个人中心", ids);
   text(invoice, "发票详情", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const status = box(invoice, "Invoice detail status", 64, 180, 1312, 140, colors.warm, 10, ids);
@@ -1809,7 +1887,7 @@ function buildInvoiceDetail(page, x, y, ids) {
 
 function buildAccountClosure(page, x, y, ids) {
   const closure = screen(page, "PC Web / 注销账号", x, y, ids);
-  header(closure, "会员", ids);
+  header(closure, "个人中心", ids);
   text(closure, "注销账号", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const warn = box(closure, "Closure warning", 64, 180, 1312, 150, colors.warm, 10, ids);
@@ -1834,12 +1912,13 @@ function buildAccountClosure(page, x, y, ids) {
   button(form, "提交申请", 24, 420, 140, false, ids);
   button(form, "返回安全中心", 188, 420, 140, true, ids);
 
+  applyPersonalCenterLayout(closure, "隐私设置", ids);
   return closure;
 }
 
 function buildHelpCenter(page, x, y, ids) {
   const help = screen(page, "PC Web / 帮助中心", x, y, ids);
-  header(help, "会员", ids);
+  header(help, "个人中心", ids);
   text(help, "帮助中心", 64, 118, 220, 30, "Bold", colors.ink, ids);
 
   const search = frame(help, "Help search hero", 64, 180, 1312, 180, colors.warm, 16, ids);
@@ -1933,7 +2012,7 @@ async function run() {
   const startY = getStartY(page);
   const note = box(page, "PC Web expansion note", 40, startY, 2940, 84, colors.white, 8, createdIds);
   text(note, "PC Web 完整页面补充", 28, 20, 320, 24, "Bold", colors.ink, createdIds);
-  text(note, "已按业务模块分组排布：频道入口、商品浏览、交易支付、订单、会员资产、账号通知、履约售后、客服发票、帮助异常。", 360, 24, 1500, 16, "Regular", colors.muted, createdIds);
+  text(note, "已按业务模块分组排布：频道入口、商品浏览、交易支付、订单、个人中心资产、账号消息、履约售后、客服发票、帮助异常。", 360, 24, 1500, 16, "Regular", colors.muted, createdIds);
 
   const screenGapX = 60;
   const groupHeaderH = 74;
@@ -1964,13 +2043,13 @@ async function run() {
       builders: [buildOrderList, buildOrderEmpty, buildOrderCancel, buildRefundResult, buildOrderDetail]
     },
     {
-      title: "05 会员资产",
-      subtitle: "个人中心、资料、地址、优惠券、收藏、足迹、评价和积分。",
+      title: "05 个人中心与资产",
+      subtitle: "个人中心为入口；资料、地址、优惠券、收藏、足迹、评价和积分为资产/资料页，空状态和成功页为对应页面状态。",
       builders: [buildAccount, buildProfile, buildAddressManager, buildAddressEmpty, buildCouponCenter, buildFavorites, buildFavoritesEmpty, buildBrowsingHistory, buildReview, buildReviewSuccess, buildMemberPoints]
     },
     {
       title: "06 账号与消息",
-      subtitle: "安全、实名、支付密码、隐私、手机绑定、重置密码、消息和通知偏好。",
+      subtitle: "账号安全、隐私设置、消息中心为入口；实名、支付密码、手机绑定、重置密码、通知偏好由父页面操作进入。",
       builders: [buildAccountSecurity, buildRealNameVerification, buildPayPassword, buildPrivacySettings, buildBindPhone, buildResetPassword, buildMessageCenter, buildNotificationPreferences]
     },
     {

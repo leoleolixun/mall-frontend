@@ -38,6 +38,10 @@ export interface ListPageData {
   columns: TableColumn[];
   rows: TableRow[];
   tableSubtitle?: string;
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  emptyText?: string;
 }
 
 export interface DashboardPageData {
@@ -52,6 +56,8 @@ export interface DashboardPageData {
   chartBars: number[];
   columns: TableColumn[];
   rows: TableRow[];
+  tableTitle?: string;
+  tableSubtitle?: string;
 }
 
 export interface FormSection {

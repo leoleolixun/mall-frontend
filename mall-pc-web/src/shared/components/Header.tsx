@@ -1,6 +1,6 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-import { Bell, ChevronDown, LogOut, MapPin, Package, Search, ShieldCheck, ShoppingCart, UserRound } from "lucide-react";
+import { ChevronDown, LogOut, MapPin, Package, Search, ShoppingCart, UserRound } from "lucide-react";
 import type { PageKey } from "@/shared/types/domain";
 
 export const Header: React.FC<{
@@ -13,10 +13,8 @@ export const Header: React.FC<{
   onCart: () => void;
   onLogin: () => void;
   onLogout: () => void;
-  onMessages: () => void;
   onNavigate: (page: PageKey) => void;
   onOrders: () => void;
-  onSecurity: () => void;
   onSearch: (value: string) => void;
 }> = ({
   active,
@@ -28,10 +26,8 @@ export const Header: React.FC<{
   onCart,
   onLogin,
   onLogout,
-  onMessages,
   onNavigate,
   onOrders,
-  onSecurity,
   onSearch
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -84,13 +80,11 @@ export const Header: React.FC<{
       <nav className="top-nav" aria-label="主导航">
         <button className={active === "首页" ? "active" : ""} onClick={() => onNavigate("home")}>首页</button>
         <button className={active === "分类" ? "active" : ""} onClick={() => onNavigate("product-list")}>分类</button>
-        <button className={active === "新品" ? "active" : ""} onClick={() => onNavigate("presale")}>新品</button>
-        <button className={active === "热卖" ? "active" : ""} onClick={() => onNavigate("bundle")}>热卖</button>
         <button className={active === "个人中心" ? "active" : ""} onClick={() => isLoggedIn ? onAccount() : onNavigate("auth")}>个人中心</button>
       </nav>
       <label className="search-box">
         <Search size={16} />
-        <input placeholder="搜索商品 / 品牌 / 分类" onChange={(event) => onSearch(event.target.value)} />
+        <input placeholder="搜索商品 / 分类" onChange={(event) => onSearch(event.target.value)} />
       </label>
       <div className="user-menu" ref={userMenuRef}>
         <button
@@ -116,14 +110,6 @@ export const Header: React.FC<{
             <button type="button" role="menuitem" onClick={() => runMenuAction(onAddresses)}>
               <MapPin size={15} />
               地址管理
-            </button>
-            <button type="button" role="menuitem" onClick={() => runMenuAction(onMessages)}>
-              <Bell size={15} />
-              消息中心
-            </button>
-            <button type="button" role="menuitem" onClick={() => runMenuAction(onSecurity)}>
-              <ShieldCheck size={15} />
-              账号安全
             </button>
             <span />
             <button type="button" role="menuitem" className="danger" onClick={() => runMenuAction(onLogout)}>

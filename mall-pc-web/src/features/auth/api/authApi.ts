@@ -1,4 +1,4 @@
-import { authStorage, request } from "@/api/client";
+import { ApiError, authStorage, refreshAuth, request } from "@/api/client";
 import type { AuthResponse, UpdateProfileRequest, UserResponse } from "@/api/client";
 
 export const authApi = {
@@ -8,11 +8,25 @@ export const authApi = {
       body: JSON.stringify(payload)
     });
   },
-  logout(refreshToken: string): Promise<void> {
-    return request<void>("/auth/logout", {
+  async logout(): Promise<void> {
+    const logoutWithToken = (refreshToken: string): Promise<void> => request<void>("/auth/logout", {
       method: "POST",
       body: JSON.stringify({ refresh_token: refreshToken })
-    });
+    }, false);
+    const auth = authStorage.read();
+    if (!auth?.refresh_token) {
+      return;
+    }
+
+    try {
+      await logoutWithToken(auth.refresh_token);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401) {
+        throw error;
+      }
+      const refreshed = await refreshAuth();
+      await logoutWithToken(refreshed.refresh_token);
+    }
   },
   me(): Promise<UserResponse> {
     return request<UserResponse>("/me");

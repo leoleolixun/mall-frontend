@@ -8,14 +8,16 @@ export const mapProduct = (item: ProductListItemResponse, categories: CategoryRe
   return {
     id: String(item.id),
     apiId: item.id,
+    merchantId: item.merchant_id,
+    merchantName: item.merchant_name,
+    merchantLogo: item.merchant_logo,
     name: item.name,
     price: moneyFromCent(item.min_price),
     category: category?.name ?? `分类 ${item.category_id}`,
     categoryId: item.category_id,
-    brand: "默认商户",
-    badge: item.min_price > 0 ? "接口商品" : "暂无价格",
-    sales: "实时库存",
+    brand: "",
+    badge: "",
+    sales: "",
     cover: item.cover
   };
 };
-

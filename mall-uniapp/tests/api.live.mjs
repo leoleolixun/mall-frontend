@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-const API_BASE = 'https://mall.leedu.ac.cn/api/v1'
+const API_BASE = (process.env.MALL_API_BASE || 'https://mall.leedu.ac.cn/api/v1').replace(/\/$/, '')
 const TIMEOUT_MS = 15000
 const CORS_ORIGIN = process.env.MALL_TEST_ORIGIN || 'http://localhost:8080'
 
@@ -68,7 +68,34 @@ const diagnostic = async (name, callback) => {
 }
 
 let categories
+let merchants
 let products
+
+const merchantsReady = await check('GET /merchants', async () => {
+  merchants = await request('/merchants?page=1&page_size=20')
+  assert.equal(Array.isArray(merchants.list), true, 'merchants.list must be an array')
+  assert.equal(typeof merchants.total, 'number', 'merchants.total must be a number')
+  for (const merchant of merchants.list) assert.equal(merchant.status, 1, 'public merchant must be enabled')
+})
+
+if (merchantsReady && merchants.list.length) {
+  const merchantId = merchants.list[0].id
+  await check('GET /merchants/:id', async () => {
+    const merchant = await request(`/merchants/${merchantId}`)
+    assert.equal(merchant.id, merchantId)
+    assert.equal(merchant.status, 1)
+  })
+  await check('GET /merchants/:id/categories', async () => {
+    const merchantCategories = await request(`/merchants/${merchantId}/categories`)
+    assert.equal(Array.isArray(merchantCategories), true)
+    for (const category of merchantCategories) assert.equal(category.merchant_id, merchantId)
+  })
+  await check('GET /merchants/:id/products', async () => {
+    const merchantProducts = await request(`/merchants/${merchantId}/products?page=1&page_size=5`)
+    assert.equal(Array.isArray(merchantProducts.list), true)
+    for (const product of merchantProducts.list) assert.equal(product.merchant_id, merchantId)
+  })
+}
 
 await check('GET /categories', async () => {
   categories = await request('/categories')
@@ -79,6 +106,10 @@ const productsReady = await check('GET /products', async () => {
   products = await request('/products?page=1&page_size=5')
   assert.equal(Array.isArray(products.list), true, 'products.list must be an array')
   assert.equal(typeof products.total, 'number', 'products.total must be a number')
+  for (const product of products.list) {
+    assert.equal(typeof product.merchant_name, 'string', 'product merchant_name must be a string')
+    assert.equal(typeof product.merchant_logo, 'string', 'product merchant_logo must be a string')
+  }
 })
 
 if (productsReady && products.list.length) {
@@ -112,6 +143,12 @@ await diagnostic('OPTIONS /products (direct CORS)', async () => {
 })
 
 const shouldRegister = process.env.MALL_TEST_REGISTER === '1'
+if (shouldRegister && process.env.MALL_ALLOW_MUTATION_TESTS !== '1') {
+  throw new Error('注册测试会写入数据，必须显式设置 MALL_ALLOW_MUTATION_TESTS=1')
+}
+if (shouldRegister && new URL(API_BASE).hostname === 'mall.leedu.ac.cn' && process.env.MALL_ALLOW_PRODUCTION_MUTATION !== '1') {
+  throw new Error('拒绝在正式商城运行注册测试')
+}
 const username = process.env.MALL_TEST_USERNAME || (shouldRegister ? `codex_${Date.now()}` : '')
 const password = process.env.MALL_TEST_PASSWORD || (shouldRegister ? 'MallTest_260712!' : '')
 const nickname = process.env.MALL_TEST_NICKNAME || 'Codex API Test'
@@ -152,6 +189,22 @@ if (username && password) {
     await check('GET /orders', async () => {
       const orders = await request('/orders?page=1&page_size=5', { token })
       assert.equal(Array.isArray(orders.list), true, 'orders.list must be an array')
+    })
+    await check('GET /favorites/products', async () => {
+      const favorites = await request('/favorites/products?page=1&page_size=5', { token })
+      assert.equal(Array.isArray(favorites.list), true, 'favorites.list must be an array')
+    })
+    await check('GET /coupons', async () => {
+      const coupons = await request('/coupons', { token })
+      assert.equal(Array.isArray(coupons), true, 'coupons data must be an array')
+    })
+    await check('GET /me/coupons', async () => {
+      const coupons = await request('/me/coupons', { token })
+      assert.equal(Array.isArray(coupons), true, 'my coupons data must be an array')
+    })
+    await check('GET /after-sales', async () => {
+      const afterSales = await request('/after-sales?page=1&page_size=5', { token })
+      assert.equal(Array.isArray(afterSales.list), true, 'after-sales.list must be an array')
     })
   }
 } else {

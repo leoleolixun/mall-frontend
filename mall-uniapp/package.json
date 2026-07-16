@@ -1,0 +1,37 @@
+{
+  "name": "mall-uniapp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:h5": "uni",
+    "dev:mp-weixin": "uni -p mp-weixin",
+    "build:h5": "uni build",
+    "build:mp-weixin": "uni build -p mp-weixin",
+    "test": "node tests/api.contract.mjs && node tests/order-flow.contract.mjs && node tests/pages.contract.mjs",
+    "test:e2e:h5": "playwright test",
+    "test:live": "node tests/api.live.mjs",
+    "test:e2e:api": "node tests/api.e2e.mjs"
+  },
+  "dependencies": {
+    "vue": "3.4.21",
+    "vue-i18n": "11.4.6"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "3.4.31",
+    "@dcloudio/uni-app": "3.0.0-5010520260709002",
+    "@dcloudio/uni-cli-shared": "3.0.0-5010520260709002",
+    "@dcloudio/uni-components": "3.0.0-5010520260709002",
+    "@dcloudio/uni-h5": "3.0.0-5010520260709002",
+    "@dcloudio/uni-mp-weixin": "3.0.0-5010520260709002",
+    "@dcloudio/uni-stacktracey": "3.0.0-5010520260709002",
+    "@dcloudio/vite-plugin-uni": "3.0.0-5010520260709002",
+    "@playwright/test": "1.61.1",
+    "@vue/runtime-core": "3.4.21",
+    "rollup": "4.62.2",
+    "vite": "5.2.8"
+  },
+  "engines": {
+    "node": ">=20 <23"
+  }
+}

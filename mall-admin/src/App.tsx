@@ -1,9 +1,10 @@
-import { BarChart3, Bell, ChevronDown, ChevronRight, ClipboardList, Headphones, Package, Search, Settings, ShieldCheck, Tags, UserRound, UsersRound, WalletCards } from "lucide-react";
+import { BarChart3, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Package, ShieldCheck, Tags, UserRound, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { buildMerchantCustomerDetailPage, buildMerchantOrderDetailPage, buildMerchantRemotePages } from "./api/merchantMappers";
-import { clearMerchantAuth, loadStoredMerchantAuth, merchantApi, merchantApiBaseUrl, storeMerchantAuth, type MerchantAccount, type MerchantAfterSale, type MerchantCategory, type MerchantCoupon, type MerchantDashboardAnalytics, type MerchantDashboardOverview, type MerchantInventoryAlert, type MerchantOrder, type MerchantProduct, type MerchantRole, type MerchantUser, type PageResponse } from "./api/merchantApi";
+import { buildMerchantCustomerDetailPage, buildMerchantOrderDetailPage, buildMerchantRemotePages, buildMerchantSettlementDetailPage } from "./api/merchantMappers";
+import { clearMerchantAuth, loadStoredMerchantAuth, merchantApi, merchantApiBaseUrl, storeMerchantAuth, subscribeMerchantAuthExpired, type MerchantAccount, type MerchantAfterSale, type MerchantCategory, type MerchantCoupon, type MerchantDashboardAnalytics, type MerchantDashboardOverview, type MerchantInventoryAlert, type MerchantOrder, type MerchantProduct, type MerchantRole, type MerchantSku, type MerchantUser, type PageResponse } from "./api/merchantApi";
 import { adminGroups, adminPages } from "./data/adminPages";
-import type { AdminPageData, BoardPageData, DashboardPageData, DetailPageData, FormPageData, ListPageData, MatrixPageData, TableColumn, TableRow, Tone } from "./types";
+import { createMerchantListQuery, MerchantListPage, type MerchantListQuery } from "./features/merchant-list/MerchantListPage";
+import type { AdminPageData, DashboardPageData, DetailPageData, FormPageData, ListPageData, MatrixPageData, TableColumn, TableRow, Tone } from "./types";
 
 const toneClass = (tone: Tone) => `tone-${tone}`;
 
@@ -13,25 +14,23 @@ const sidebarModules = [
   { id: "orders", title: "订单履约", icon: ClipboardList },
   { id: "users", title: "用户会员", icon: UsersRound },
   { id: "marketing", title: "营销运营", icon: Tags },
-  { id: "finance", title: "财务结算", icon: WalletCards },
-  { id: "group07", title: "商户权限", icon: ShieldCheck },
-  { id: "support", title: "客服内容", icon: Headphones },
-  { id: "group09", title: "系统设置", icon: Settings }
+  { id: "finance", title: "财务结算", icon: CircleDollarSign },
+  { id: "group07", title: "商户权限", icon: ShieldCheck }
 ];
 
 const pagePermissions: Record<string, string | undefined> = {
   "dashboard-overview": "dashboard:read",
   products: "catalog:read",
-  "product-edit": "catalog:read",
   categories: "catalog:read",
   inventory: "inventory:read",
+  "inventory-logs": "inventory:read",
   "order-list": "order:read",
   "order-detail": "order:read",
-  "shipping-management": "order:ship",
-  "logistics-tracking": "order:read",
   "aftersale-list": "after_sale:read",
-  "aftersale-detail": "after_sale:read",
   "coupon-management": "marketing:read",
+  "merchant-settlements": "settlement:read",
+  "settlement-entries": "settlement:read",
+  "merchant-settlement-detail": "settlement:read",
   "merchant-info": undefined,
   employees: "account:read",
   roles: "account:read",
@@ -43,8 +42,12 @@ const pagePermissions: Record<string, string | undefined> = {
 const canAccessPage = (pageId: string, user?: MerchantUser) => {
   if (!(pageId in pagePermissions)) return false;
   const permission = pagePermissions[pageId];
-  return !permission || !user || user.permissions.includes(permission);
+  return !permission || Boolean(user?.permissions.includes(permission));
 };
+
+const canManageAccountRole = (actorRole: string, targetRole: string) => (
+  actorRole === "owner" || (actorRole === "admin" && targetRole !== "owner" && targetRole !== "admin")
+);
 
 const writePermissionByPage: Partial<Record<string, string>> = {
   products: "catalog:write",
@@ -84,6 +87,30 @@ const emptyAnalytics: MerchantDashboardAnalytics = {
   generated_at: ""
 };
 
+const listPageIds = [
+  "products",
+  "categories",
+  "inventory",
+  "inventory-logs",
+  "order-list",
+  "aftersale-list",
+  "coupon-management",
+  "merchant-settlements",
+  "settlement-entries",
+  "employees",
+  "user-list"
+] as const;
+
+const createInitialListQueries = () => Object.fromEntries(
+  listPageIds.map((pageId) => [pageId, createMerchantListQuery()])
+) as Record<string, MerchantListQuery>;
+
+const optionalInteger = (value: string) => {
+  if (value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : undefined;
+};
+
 const StatusPill: React.FC<{ value: string }> = ({ value }) => {
   const tone: Tone = value.includes("成功") || value.includes("启用") || value.includes("在售") || value.includes("已完成") || value.includes("推荐")
     ? "green"
@@ -95,37 +122,6 @@ const StatusPill: React.FC<{ value: string }> = ({ value }) => {
 
   return <span className={`status-pill ${toneClass(tone)}`}>{value}</span>;
 };
-
-interface ToolbarProps {
-  page: ListPageData;
-  onAction: (page: ListPageData, actionLabel: string) => void;
-}
-
-const Toolbar: React.FC<ToolbarProps> = ({ page, onAction }) => (
-  <div className="toolbar">
-    <div className="filters">
-      {page.filters.map((filter) => (
-        <label className="filter-control" key={filter}>
-          <input placeholder={`请输入${filter}`} />
-        </label>
-      ))}
-    </div>
-    <div className="actions">
-      <button className="primary-button">查询</button>
-      <button className="ghost-button">重置</button>
-      {page.actions.map((action) => (
-        <button
-          key={action.label}
-          className={action.variant === "primary" ? "primary-button" : "ghost-button"}
-          onClick={() => onAction(page, action.label)}
-          type="button"
-        >
-          {action.label}
-        </button>
-      ))}
-    </div>
-  </div>
-);
 
 interface TableViewProps {
   title: string;
@@ -142,7 +138,6 @@ const TableView: React.FC<TableViewProps> = ({ title, subtitle = "共 128 条，
         <h3>{title}</h3>
         <p>{subtitle}</p>
       </div>
-      <button className="ghost-button compact">列设置</button>
     </div>
     <table>
       <thead>
@@ -153,14 +148,16 @@ const TableView: React.FC<TableViewProps> = ({ title, subtitle = "共 128 条，
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
+        {rows.length === 0 ? (
+          <tr className="empty-row"><td colSpan={columns.length}>暂无数据</td></tr>
+        ) : rows.map((row) => (
           <tr key={row.id}>
             {columns.map((column, index) => {
               const value = row.cells[column.key] ?? "-";
               const isAction = column.key === "action";
               return (
                 <td key={column.key} className={index === 0 ? "strong-cell" : undefined}>
-                  {isAction && onRowAction ? (
+                  {isAction && onRowAction && value !== "-" ? (
                     <button className="link-button" onClick={() => onRowAction(row)}>{value}</button>
                   ) : column.key === "status" || column.key === "result" ? (
                     <StatusPill value={value} />
@@ -175,27 +172,12 @@ const TableView: React.FC<TableViewProps> = ({ title, subtitle = "共 128 条，
       </tbody>
     </table>
     <div className="pagination">
-      <span>已选择 0 条</span>
-      <div>
-        <button className="ghost-button compact">上一页</button>
-        <button className="primary-button compact">下一页</button>
-      </div>
+      <span>共 {rows.length} 条</span>
     </div>
   </section>
 );
 
-const DataTable: React.FC<{ page: ListPageData; onRowAction?: (row: TableRow) => void }> = ({ page, onRowAction }) => (
-  <TableView title={page.title} subtitle={page.tableSubtitle} columns={page.columns} rows={page.rows} onRowAction={onRowAction} />
-);
-
-const ListPage: React.FC<{ page: ListPageData; onRowAction?: (row: TableRow) => void; onToolbarAction: (page: ListPageData, actionLabel: string) => void }> = ({ page, onRowAction, onToolbarAction }) => (
-  <>
-    <Toolbar page={page} onAction={onToolbarAction} />
-    <DataTable page={page} onRowAction={onRowAction} />
-  </>
-);
-
-const DashboardPage: React.FC<{ page: DashboardPageData }> = ({ page }) => (
+const DashboardPage: React.FC<{ page: DashboardPageData; onTodo: (pageId: string) => void }> = ({ page, onTodo }) => (
   <div className="dashboard-layout">
     <div className="metric-grid">
       {page.metrics.map((metric) => (
@@ -225,7 +207,7 @@ const DashboardPage: React.FC<{ page: DashboardPageData }> = ({ page }) => (
       <h3>待办事项</h3>
       <div className="todo-list">
         {page.todos.map((todo, index) => (
-          <button className={index === 0 ? "todo-item featured" : "todo-item"} key={todo}>
+          <button className={index === 0 ? "todo-item featured" : "todo-item"} key={todo} onClick={() => onTodo(index < 2 ? "order-list" : "inventory")} type="button">
             <span>{todo}</span>
             <strong>处理</strong>
           </button>
@@ -233,8 +215,8 @@ const DashboardPage: React.FC<{ page: DashboardPageData }> = ({ page }) => (
       </div>
     </section>
     <TableView
-      title="实时订单"
-      subtitle="最近 30 分钟订单动态"
+      title={page.tableTitle ?? "经营数据"}
+      subtitle={page.tableSubtitle ?? "最新统计"}
       columns={page.columns}
       rows={page.rows}
     />
@@ -243,6 +225,20 @@ const DashboardPage: React.FC<{ page: DashboardPageData }> = ({ page }) => (
 
 const FormPage: React.FC<{ page: FormPageData; fieldValues?: Record<string, string> }> = ({ page, fieldValues }) => {
   const values = fieldValues ?? page.fieldValues;
+  if (page.id === "merchant-info") {
+    return (
+      <section className="panel merchant-info-panel">
+        <div className="merchant-info-grid">
+          {page.sections.flatMap((section) => section.fields).map((field) => (
+            <div className="merchant-info-item" key={field}>
+              <span>{field}</span>
+              <strong>{values?.[field] || "-"}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
   return (
   <div className="form-layout">
     <section className="panel form-panel">
@@ -314,53 +310,7 @@ const MatrixPage: React.FC<{ page: MatrixPageData }> = ({ page }) => (
   </section>
 );
 
-const BoardPage: React.FC<{ page: BoardPageData }> = ({ page }) => (
-  <div className="board-layout">
-    <section className="panel board-canvas">
-      <div className="panel-title">
-        <div>
-          <h3>{page.title}画布</h3>
-          <p>拖拽排序，支持端口差异化配置。</p>
-        </div>
-        <button className="primary-button">保存配置</button>
-      </div>
-      <div className="board-card-grid">
-        {page.cards.map((card, index) => (
-          <section className={index === 0 ? "board-card featured" : "board-card"} key={card}>
-            <h3>{card}</h3>
-            <p>支持内容、跳转、展示终端和排序配置。</p>
-            <button className="primary-button compact">配置</button>
-          </section>
-        ))}
-      </div>
-    </section>
-    <aside className="panel board-config">
-      <h3>属性面板</h3>
-      <label>
-        <span>组件标题</span>
-        <input defaultValue={page.cards[0]} />
-      </label>
-      <label>
-        <span>展示终端</span>
-        <input defaultValue="H5 / 小程序 / PC Web" />
-      </label>
-      <label>
-        <span>跳转链接</span>
-        <input placeholder="请输入跳转链接" />
-      </label>
-      <div className="switch-row">
-        <span>展示状态</span>
-        <div>
-          <span className="status-pill tone-green">启用</span>
-          <span className="status-pill tone-orange">隐藏</span>
-        </div>
-      </div>
-      <button className="primary-button board-save">保存配置</button>
-    </aside>
-  </div>
-);
-
-const DetailPage: React.FC<{ page: DetailPageData; onAction: (actionLabel: string) => void }> = ({ page, onAction }) => (
+const DetailPage: React.FC<{ page: DetailPageData; onAction: (actionLabel: string) => void; onRowAction?: (row: TableRow) => void }> = ({ page, onAction, onRowAction }) => (
   <div className="detail-layout">
     {page.actions?.length ? <div className="actions">{page.actions.map((action) => <button key={action.label} className={action.variant === "primary" ? "primary-button" : "ghost-button"} type="button" onClick={() => onAction(action.label)}>{action.label}</button>)}</div> : null}
     <section className="panel detail-summary">
@@ -387,6 +337,7 @@ const DetailPage: React.FC<{ page: DetailPageData; onAction: (actionLabel: strin
       subtitle="关键流转记录"
       columns={page.columns}
       rows={page.rows}
+      onRowAction={onRowAction}
     />
   </div>
 );
@@ -394,29 +345,35 @@ const DetailPage: React.FC<{ page: DetailPageData; onAction: (actionLabel: strin
 interface PageContentProps {
   page: AdminPageData;
 	merchantUser?: MerchantUser;
-  productFieldValues?: Record<string, string>;
+  listQuery: MerchantListQuery;
+  loading: boolean;
+  onListQueryChange: (patch: Partial<MerchantListQuery>) => void;
+  onListSearch: () => void;
+  onListReset: () => void;
+  onListRefresh: () => void;
+  onListPageChange: (page: number) => void;
+  onDashboardNavigate: (pageId: string) => void;
   onToolbarAction: (page: ListPageData, actionLabel: string) => void;
   onProductEdit: (row: TableRow) => void;
   onEmployeeEdit: (row: TableRow) => void;
   onOrderDetail: (row: TableRow) => void;
   onAfterSaleDetail: (row: TableRow) => void;
   onUserDetail: (row: TableRow) => void;
-  onTicketDetail: (row: TableRow) => void;
-  onReconciliation: (row: TableRow) => void;
   onCategoryEdit: (row: TableRow) => void;
   onInventoryAdjust: (row: TableRow) => void;
   onCouponEdit: (row: TableRow) => void;
+  onSettlementDetail: (row: TableRow) => void;
   onDetailAction: (actionLabel: string) => void;
 }
 
-const PageContent: React.FC<PageContentProps> = ({ page, merchantUser, productFieldValues, onToolbarAction, onProductEdit, onEmployeeEdit, onOrderDetail, onAfterSaleDetail, onUserDetail, onTicketDetail, onReconciliation, onCategoryEdit, onInventoryAdjust, onCouponEdit, onDetailAction }) => {
-  if (page.kind === "dashboard") return <DashboardPage page={page} />;
+const PageContent: React.FC<PageContentProps> = ({ page, merchantUser, listQuery, loading, onListQueryChange, onListSearch, onListReset, onListRefresh, onListPageChange, onDashboardNavigate, onToolbarAction, onProductEdit, onEmployeeEdit, onOrderDetail, onAfterSaleDetail, onUserDetail, onCategoryEdit, onInventoryAdjust, onCouponEdit, onSettlementDetail, onDetailAction }) => {
+  if (page.kind === "dashboard") return <DashboardPage page={page} onTodo={onDashboardNavigate} />;
   if (page.kind === "form") {
-    return <FormPage page={page} fieldValues={page.id === "product-edit" ? productFieldValues : undefined} />;
+    return <FormPage page={page} />;
   }
-  if (page.kind === "detail") return <DetailPage page={page} onAction={onDetailAction} />;
+  if (page.kind === "detail") return <DetailPage page={page} onAction={onDetailAction} onRowAction={page.id === "user-detail" ? onOrderDetail : undefined} />;
   if (page.kind === "matrix") return <MatrixPage page={page} />;
-  if (page.kind === "board") return <BoardPage page={page} />;
+  if (page.kind !== "list") return null;
 	const canWrite = canWritePage(page.id, merchantUser);
   const onRowAction = page.id === "products" && canWrite
     ? onProductEdit
@@ -430,16 +387,27 @@ const PageContent: React.FC<PageContentProps> = ({ page, merchantUser, productFi
       ? onEmployeeEdit
     : page.id === "order-list"
       ? onOrderDetail
-      : page.id === "aftersale-list" && canWrite
+      : page.id === "aftersale-list"
         ? onAfterSaleDetail
         : page.id === "user-list"
           ? onUserDetail
-          : page.id === "support-tickets"
-            ? onTicketDetail
-            : page.id === "merchant-settlements"
-              ? onReconciliation
-              : undefined;
-  return <ListPage page={page} onRowAction={onRowAction} onToolbarAction={onToolbarAction} />;
+          : page.id === "merchant-settlements"
+            ? onSettlementDetail
+          : undefined;
+  return (
+    <MerchantListPage
+      page={page}
+      query={listQuery}
+      loading={loading}
+      onQueryChange={onListQueryChange}
+      onSearch={onListSearch}
+      onReset={onListReset}
+      onRefresh={onListRefresh}
+      onPageChange={onListPageChange}
+      onRowAction={onRowAction}
+      onToolbarAction={onToolbarAction}
+    />
+  );
 };
 
 interface ApiState {
@@ -510,9 +478,13 @@ interface ActionModalConfig {
   fields: ModalField[];
   accountId?: number;
   entityId?: number;
+  readOnly?: boolean;
+  productId?: number;
+  skuId?: number;
+  skus?: MerchantSku[];
 }
 
-const buildActionModalConfig = (page: ListPageData, actionLabel: string): ActionModalConfig | undefined => {
+const buildActionModalConfig = (page: ListPageData, actionLabel: string, categories: MerchantCategory[] = []): ActionModalConfig | undefined => {
   if (!actionLabel.includes("新增")) return undefined;
 
   if (page.id === "products") {
@@ -523,9 +495,11 @@ const buildActionModalConfig = (page: ListPageData, actionLabel: string): Action
       description: "创建商品基础资料，创建后可继续维护 SKU、库存和上架状态。",
       fields: [
         { name: "name", label: "商品名称", placeholder: "请输入商品名称" },
-        { name: "categoryId", label: "分类 ID", placeholder: "请输入分类 ID", type: "number" },
+        { name: "categoryId", label: "商品分类", placeholder: "请选择分类", type: "select", options: [{ label: "请选择分类", value: "" }, ...categories.filter((category) => category.status === 1).map((category) => ({ label: category.name, value: String(category.id) }))] },
         { name: "description", label: "商品描述", placeholder: "请输入商品描述" },
-        { name: "cover", label: "商品主图", placeholder: "请输入图片地址" }
+        { name: "cover", label: "商品主图 URL", placeholder: "请输入图片地址" },
+        { name: "coverFile", label: "上传主图（可选）", placeholder: "", type: "file" },
+        { name: "status", label: "商品状态", placeholder: "", type: "select", defaultValue: "0", options: [{ label: "草稿", value: "0" }, { label: "下架", value: "2" }] }
       ]
     };
   }
@@ -538,8 +512,9 @@ const buildActionModalConfig = (page: ListPageData, actionLabel: string): Action
       description: "创建商户商品分类，可设置上级分类、排序和启用状态。",
       fields: [
         { name: "name", label: "分类名称", placeholder: "请输入分类名称" },
-        { name: "parentId", label: "上级分类 ID", placeholder: "不填默认为一级分类", type: "number" },
-        { name: "sort", label: "排序", placeholder: "请输入排序值", type: "number", defaultValue: "0" }
+        { name: "parentId", label: "上级分类", placeholder: "请选择上级分类", type: "select", defaultValue: "0", options: [{ label: "无（一级分类）", value: "0" }, ...categories.map((category) => ({ label: category.name, value: String(category.id) }))] },
+        { name: "sort", label: "排序", placeholder: "请输入排序值", type: "number", defaultValue: "0" },
+        { name: "status", label: "状态", placeholder: "", type: "select", defaultValue: "1", options: [{ label: "启用", value: "1" }, { label: "停用", value: "0" }] }
       ]
     };
   }
@@ -624,28 +599,47 @@ const buildEmployeeEditModal = (account: MerchantAccount, roles: MerchantRole[])
   ]
 });
 
-const buildProductEditModal = (product: MerchantProduct): ActionModalConfig => ({
-  pageId: "products", actionLabel: "编辑商品", title: `编辑商品 · ${product.name}`, description: "维护商品资料和第一个 SKU；上下架、删除也通过本次操作提交。",
+const buildProductEditModal = (product: MerchantProduct, categories: MerchantCategory[]): ActionModalConfig => ({
+  pageId: "products", actionLabel: "编辑商品", title: `编辑商品 · ${product.name}`, description: "先维护商品资料，再在下方独立管理每个 SKU；上架前至少需要一个启用且价格有效的 SKU。",
   entityId: product.id,
+  productId: product.id,
+  skus: product.skus,
   fields: [
     { name: "name", label: "商品名称", placeholder: "请输入商品名称", defaultValue: product.name },
-    { name: "categoryId", label: "分类 ID", placeholder: "请输入分类 ID", type: "number", defaultValue: String(product.category_id) },
+    { name: "categoryId", label: "商品分类", placeholder: "请选择分类", type: "select", defaultValue: String(product.category_id), options: categories.filter((category) => category.status === 1 || category.id === product.category_id).map((category) => ({ label: category.name, value: String(category.id) })) },
     { name: "description", label: "商品描述", placeholder: "请输入商品描述", defaultValue: product.description },
     { name: "cover", label: "商品主图 URL", placeholder: "可直接填写 URL", defaultValue: product.cover },
     { name: "coverFile", label: "上传新主图（可选）", placeholder: "", type: "file" },
-    { name: "skuName", label: "首个 SKU 名称", placeholder: "默认规格", defaultValue: product.skus[0]?.name ?? "默认规格" },
-    { name: "skuPrice", label: "首个 SKU 售价（元）", placeholder: "99.00", type: "number", defaultValue: product.skus[0] ? String(product.skus[0].price / 100) : "" },
-    { name: "skuStock", label: product.skus[0] ? "首个 SKU 库存（请到库存页调整）" : "首个 SKU 初始库存", placeholder: "0", type: "number", defaultValue: String(product.skus[0]?.stock ?? 0), disabled: Boolean(product.skus[0]) },
     { name: "status", label: "商品状态", placeholder: "", type: "select", defaultValue: String(product.status), options: [{ label: "草稿", value: "0" }, { label: "上架", value: "1" }, { label: "下架", value: "2" }] },
     { name: "operation", label: "保存操作", placeholder: "", type: "select", defaultValue: "save", options: [{ label: "保存资料", value: "save" }, { label: "保存并上架", value: "on_sale" }, { label: "保存并下架", value: "off_sale" }, { label: "删除商品", value: "delete" }] }
   ]
 });
 
-const buildCategoryEditModal = (category: MerchantCategory): ActionModalConfig => ({
+const buildSkuModal = (productId: number, sku?: MerchantSku): ActionModalConfig => ({
+  pageId: "sku",
+  actionLabel: sku ? "编辑 SKU" : "新增 SKU",
+  title: sku ? `编辑 SKU · ${sku.name}` : "新增 SKU",
+  description: "价格单位按元填写，保存时转换为分；库存变更会生成库存流水。",
+  entityId: productId,
+  productId,
+  skuId: sku?.id,
+  fields: [
+    { name: "name", label: "SKU 名称", placeholder: "例如：黑色 / 128G", defaultValue: sku?.name ?? "" },
+    { name: "image", label: "SKU 图片 URL", placeholder: "可与商品主图相同", defaultValue: sku?.image ?? "" },
+    { name: "imageFile", label: "上传 SKU 图片（可选）", placeholder: "", type: "file" },
+    { name: "price", label: "销售价（元）", placeholder: "99.00", type: "number", defaultValue: sku ? String(sku.price / 100) : "" },
+    { name: "stock", label: "可售库存", placeholder: "0", type: "number", defaultValue: String(sku?.stock ?? 0) },
+    { name: "lowStockThreshold", label: "低库存预警线", placeholder: "0", type: "number", defaultValue: String(sku?.low_stock_threshold ?? 0) },
+    { name: "status", label: "SKU 状态", placeholder: "", type: "select", defaultValue: String(sku?.status ?? 1), options: [{ label: "启用", value: "1" }, { label: "停用", value: "0" }] },
+    ...(sku ? [{ name: "operation", label: "保存操作", placeholder: "", type: "select" as const, defaultValue: "save", options: [{ label: "保存 SKU", value: "save" }, { label: "删除 SKU", value: "delete" }] }] : [])
+  ]
+});
+
+const buildCategoryEditModal = (category: MerchantCategory, categories: MerchantCategory[]): ActionModalConfig => ({
   pageId: "categories", actionLabel: "编辑分类", title: `编辑分类 · ${category.name}`, description: "维护分类层级、排序和状态；删除前必须确保分类下没有商品。", entityId: category.id,
   fields: [
     { name: "name", label: "分类名称", placeholder: "请输入分类名称", defaultValue: category.name },
-    { name: "parentId", label: "上级分类 ID", placeholder: "0", type: "number", defaultValue: String(category.parent_id) },
+    { name: "parentId", label: "上级分类", placeholder: "请选择上级分类", type: "select", defaultValue: String(category.parent_id), options: [{ label: "无（一级分类）", value: "0" }, ...categories.filter((item) => item.id !== category.id).map((item) => ({ label: item.name, value: String(item.id) }))] },
     { name: "sort", label: "排序", placeholder: "0", type: "number", defaultValue: String(category.sort) },
     { name: "status", label: "状态", placeholder: "", type: "select", defaultValue: String(category.status), options: [{ label: "启用", value: "1" }, { label: "停用", value: "0" }] },
     { name: "operation", label: "保存操作", placeholder: "", type: "select", defaultValue: "save", options: [{ label: "保存", value: "save" }, { label: "删除分类", value: "delete" }] }
@@ -653,8 +647,12 @@ const buildCategoryEditModal = (category: MerchantCategory): ActionModalConfig =
 });
 
 const buildInventoryModal = (alert: MerchantInventoryAlert): ActionModalConfig => ({
-  pageId: "inventory", actionLabel: "调整库存", title: `调整库存 · ${alert.sku_name}`, description: "填写调整后的绝对库存值，后端会记录变更前后数量和操作人。", entityId: alert.sku_id,
-  fields: [{ name: "stock", label: "调整后库存", placeholder: "0", type: "number", defaultValue: String(alert.stock) }, { name: "remark", label: "调整原因", placeholder: "例如：采购入库" }]
+  pageId: "inventory", actionLabel: "调整库存", title: `调整库存 · ${alert.sku_name}`, description: "填写调整后的绝对库存和预警线，后端会记录变更前后数量和操作人。", entityId: alert.sku_id,
+  fields: [
+    { name: "stock", label: "调整后库存", placeholder: "0", type: "number", defaultValue: String(alert.stock) },
+    { name: "lowStockThreshold", label: "低库存预警线", placeholder: "0", type: "number", defaultValue: String(alert.low_stock_threshold) },
+    { name: "remark", label: "调整原因", placeholder: "例如：采购入库" }
+  ]
 });
 
 const buildCouponEditModal = (coupon: MerchantCoupon): ActionModalConfig => ({
@@ -669,19 +667,21 @@ interface ActionModalProps {
   submitting: boolean;
   onClose: () => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onCreateSku: (productId: number) => void;
+  onEditSku: (productId: number, sku: MerchantSku) => void;
 }
 
-const ActionModal: React.FC<ActionModalProps> = ({ config, error, submitting, onClose, onSubmit }) => (
+const ActionModal: React.FC<ActionModalProps> = ({ config, error, submitting, onClose, onSubmit, onCreateSku, onEditSku }) => (
   <div className="modal-backdrop" role="presentation">
-    <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="action-modal-title">
+    <section className={`modal-card ${config.skus ? "product-modal" : ""}`} role="dialog" aria-modal="true" aria-labelledby="action-modal-title">
       <div className="modal-head">
         <div>
           <h2 id="action-modal-title">{config.title}</h2>
           <p>{config.description}</p>
         </div>
-        <button className="modal-close" onClick={onClose} type="button">×</button>
+        <button aria-label="关闭" className="modal-close" onClick={onClose} title="关闭" type="button"><X size={17} /></button>
       </div>
-      <form onSubmit={onSubmit}>
+      <form key={`${config.pageId}-${config.actionLabel}-${config.entityId ?? "new"}-${config.skuId ?? "new"}`} onSubmit={onSubmit}>
         <div className="modal-field-grid">
           {config.fields.map((field) => (
             <label key={field.name}>
@@ -696,10 +696,27 @@ const ActionModal: React.FC<ActionModalProps> = ({ config, error, submitting, on
             </label>
           ))}
         </div>
+        {config.productId && config.skus ? (
+          <section className="sku-manager">
+            <div className="sku-manager-head">
+              <div><strong>SKU 列表</strong><span>共 {config.skus.length} 个规格</span></div>
+              <button className="ghost-button compact" disabled={submitting} onClick={() => onCreateSku(config.productId as number)} type="button">新增 SKU</button>
+            </div>
+            <div className="sku-list">
+              {config.skus.length === 0 ? <p>尚未创建 SKU，商品暂不能上架。</p> : config.skus.map((sku) => (
+                <div className="sku-row" key={sku.id}>
+                  <div><strong>{sku.name}</strong><span>¥{(sku.price / 100).toFixed(2)} · 库存 {sku.stock} · 预警线 {sku.low_stock_threshold}</span></div>
+                  <span className={`status-pill ${sku.status === 1 ? "tone-green" : "tone-gray"}`}>{sku.status === 1 ? "启用" : "停用"}</span>
+                  <button className="link-button" onClick={() => onEditSku(config.productId as number, sku)} type="button">编辑</button>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
         {error ? <p className="modal-error">{error}</p> : null}
         <div className="modal-actions">
-          <button className="ghost-button" onClick={onClose} type="button">取消</button>
-          <button className="primary-button" disabled={submitting} type="submit">{submitting ? "提交中" : "提交保存"}</button>
+          <button className="ghost-button" onClick={onClose} type="button">{config.readOnly ? "关闭" : "取消"}</button>
+          {!config.readOnly ? <button className="primary-button" disabled={submitting} type="submit">{submitting ? "提交中" : "提交保存"}</button> : null}
         </div>
       </form>
     </section>
@@ -718,7 +735,7 @@ const AccountModal: React.FC<AccountModalProps> = ({ onClose, ...authProps }) =>
           <h2 id="account-modal-title">账号与接口</h2>
           <p>登录商户后台后同步真实商品、订单、库存和工作台数据。</p>
         </div>
-        <button className="modal-close" onClick={onClose} type="button">×</button>
+        <button aria-label="关闭" className="modal-close" onClick={onClose} title="关闭" type="button"><X size={17} /></button>
       </div>
       <AuthPanel {...authProps} />
     </section>
@@ -728,10 +745,9 @@ const AccountModal: React.FC<AccountModalProps> = ({ onClose, ...authProps }) =>
 const App: React.FC = () => {
   const getInitialPageId = () => {
     const requested = new URLSearchParams(window.location.search).get("page");
-    return adminPages.some((page) => page.id === requested) ? requested as string : "dashboard-overview";
+    return requested && Object.prototype.hasOwnProperty.call(pagePermissions, requested) ? requested : "dashboard-overview";
   };
   const [activePageId, setActivePageId] = useState(getInitialPageId);
-  const [selectedProduct, setSelectedProduct] = useState<TableRow | undefined>();
   const [merchantUser, setMerchantUser] = useState<MerchantUser | undefined>();
   const [merchantAccounts, setMerchantAccounts] = useState<MerchantAccount[]>([]);
   const [merchantRoles, setMerchantRoles] = useState<MerchantRole[]>([]);
@@ -743,33 +759,31 @@ const App: React.FC = () => {
   const [remotePages, setRemotePages] = useState<Partial<Record<string, AdminPageData>>>({});
   const [loginForm, setLoginForm] = useState({ username: "merchant_admin", password: "" });
   const [apiState, setApiState] = useState<ApiState>({ loading: false, error: "", connected: false });
-  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [accountModalOpen, setAccountModalOpen] = useState(() => !loadStoredMerchantAuth());
   const [actionModal, setActionModal] = useState<ActionModalConfig | undefined>();
   const [actionModalError, setActionModalError] = useState("");
   const [actionModalSubmitting, setActionModalSubmitting] = useState(false);
+  const [operationNotice, setOperationNotice] = useState("");
+  const [listQueries, setListQueries] = useState<Record<string, MerchantListQuery>>(createInitialListQueries);
   const pages = useMemo(
-    () => adminPages.map((page) => remotePages[page.id] ?? page).filter((page) => canAccessPage(page.id, merchantUser)),
+    () => {
+      const resolved = adminPages
+        .filter((page) => page.id === "merchant-info" || Object.prototype.hasOwnProperty.call(remotePages, page.id))
+        .map((page) => remotePages[page.id] ?? page);
+      const knownPageIds = new Set(resolved.map((page) => page.id));
+      const remoteOnly = Object.values(remotePages)
+        .filter((page): page is AdminPageData => page !== undefined)
+        .filter((page) => !knownPageIds.has(page.id));
+      return [...resolved, ...remoteOnly].filter((page) => canAccessPage(page.id, merchantUser));
+    },
     [remotePages, merchantUser]
   );
   const activePage = useMemo(() => pages.find((page) => page.id === activePageId) ?? pages[0], [activePageId, pages]);
   const activeGroup = useMemo(() => adminGroups.find((group) => group.id === activePage.groupId) ?? adminGroups[0], [activePage.groupId]);
-  const productFieldValues = useMemo(() => selectedProduct ? {
-    "商品名称": selectedProduct.cells.name,
-    "商品类目": selectedProduct.cells.category,
-    "品牌": selectedProduct.cells.name.includes("耳机") ? "SoundMax" : selectedProduct.cells.name.includes("洁面") ? "GlowLab" : "默认品牌",
-    "商品卖点": "官方正品 · 极速发货 · 7 天无理由",
-    "销售价": selectedProduct.cells.price,
-    "划线价": selectedProduct.cells.price.replace("¥", "¥") + ".00",
-    "SKU 编码": selectedProduct.id.toUpperCase(),
-    "可售库存": selectedProduct.cells.stock,
-    "上架状态": selectedProduct.cells.status,
-    "运费模板": "默认包邮模板",
-    "售后策略": "7 天无理由",
-    "推荐权重": selectedProduct.status === "预警" ? "40" : "80"
-  } : undefined, [selectedProduct]);
   const pageTitle = activePage.title;
-  const pageEyebrow = activePage.id === "product-edit" ? "商品中心 / 商品列表 / 商品编辑" : activePage.eyebrow;
+  const pageEyebrow = activePage.eyebrow;
   const pageDescription = activePage.description;
+  const activeListQuery = listQueries[activePage.id] ?? createMerchantListQuery();
   const navigateToPage = (pageId: string) => {
     setActivePageId(pageId);
     const url = new URL(window.location.href);
@@ -779,20 +793,81 @@ const App: React.FC = () => {
   const openProductEdit = async (row: TableRow) => {
     const id = Number(row.id); if (!id) return;
     setApiState((current) => ({ ...current, loading: true, error: "" }));
-    try { const product = await merchantApi.productDetail(id); setActionModal(buildProductEditModal(product)); setActionModalError(""); setApiState((current) => ({ ...current, loading: false, connected: true })); }
+    try { const product = await merchantApi.productDetail(id); setActionModal(buildProductEditModal(product, merchantCategories)); setActionModalError(""); setApiState((current) => ({ ...current, loading: false, connected: true })); }
     catch (error) { setApiState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : "商品详情加载失败" })); }
+  };
+  const openCreateSku = (productId: number) => {
+    setActionModal(buildSkuModal(productId));
+    setActionModalError("");
+  };
+  const openEditSku = (productId: number, sku: MerchantSku) => {
+    setActionModal(buildSkuModal(productId, sku));
+    setActionModalError("");
   };
   const openEmployeeEdit = (row: TableRow) => {
     const account = merchantAccounts.find((item) => String(item.id) === row.id);
-    if (!account) return;
-    setActionModal(buildEmployeeEditModal(account, merchantRoles));
+    if (!account || !merchantUser || !canManageAccountRole(merchantUser.role, account.role)) return;
+    const manageableRoles = merchantRoles.filter((role) => canManageAccountRole(merchantUser.role, role.role));
+    setActionModal(buildEmployeeEditModal(account, manageableRoles));
     setActionModalError("");
   };
-  const openCategoryEdit = (row: TableRow) => { const value = merchantCategories.find((item) => String(item.id) === row.id); if (value) { setActionModal(buildCategoryEditModal(value)); setActionModalError(""); } };
+  const openCategoryEdit = (row: TableRow) => { const value = merchantCategories.find((item) => String(item.id) === row.id); if (value) { setActionModal(buildCategoryEditModal(value, merchantCategories)); setActionModalError(""); } };
   const openInventoryAdjust = (row: TableRow) => { const parts = row.id.split("-"); const skuId = Number(parts[parts.length - 1]); const value = merchantInventoryAlerts.find((item) => item.sku_id === skuId); if (value) { setActionModal(buildInventoryModal(value)); setActionModalError(""); } };
   const openCouponEdit = (row: TableRow) => { const value = merchantCoupons.find((item) => String(item.id) === row.id); if (value) { setActionModal(buildCouponEditModal(value)); setActionModalError(""); } };
+  const openSettlementDetail = async (row: TableRow) => {
+    const id = Number(row.id);
+    if (!Number.isFinite(id) || id <= 0) return;
+    setApiState((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const settlement = await merchantApi.settlementDetail(id);
+      setRemotePages((current) => ({ ...current, "merchant-settlement-detail": buildMerchantSettlementDetailPage(settlement) }));
+      setApiState((current) => ({ ...current, loading: false, connected: true }));
+      navigateToPage("merchant-settlement-detail");
+    } catch (error) {
+      setApiState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : "结算单详情加载失败" }));
+    }
+  };
   const openOrderDetail = async (row: TableRow) => { const id = Number(row.id); if (!id) return; setApiState((current) => ({ ...current, loading: true, error: "" })); try { const order = await merchantApi.orderDetail(id); setSelectedOrderId(id); setRemotePages((current) => ({ ...current, "order-detail": buildMerchantOrderDetailPage(adminPages, order, Boolean(merchantUser?.permissions.includes("order:ship"))) })); setApiState((current) => ({ ...current, loading: false, connected: true })); navigateToPage("order-detail"); } catch (error) { setApiState((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : "订单详情加载失败" })); } };
-  const openAfterSaleDetail = (row: TableRow) => { const value = merchantAfterSales.find((item) => String(item.id) === row.id); if (!value) return; setActionModal({ pageId: "aftersale-list", actionLabel: "处理售后", title: `处理售后 · ${value.after_sale_no}`, description: `${value.product_name} · ${value.reason} · 退款 ¥${(value.refund_amount / 100).toFixed(2)}`, entityId: value.id, fields: [{ name: "operation", label: "审核结果", placeholder: "", type: "select", options: [{ label: "同意并原路退款", value: "approve" }, { label: "拒绝申请", value: "reject" }] }, { name: "reason", label: "拒绝原因", placeholder: "同意时可留空" }] }); setActionModalError(""); };
+  const openAfterSaleDetail = (row: TableRow) => {
+    const value = merchantAfterSales.find((item) => String(item.id) === row.id);
+    if (!value) return;
+    const canReview = Boolean(merchantUser?.permissions.includes("after_sale:write"));
+    const detailFields: ModalField[] = [
+      { name: "afterSaleNo", label: "售后单号", placeholder: "", defaultValue: value.after_sale_no, disabled: true },
+      { name: "orderNo", label: "订单号", placeholder: "", defaultValue: value.order_no, disabled: true },
+      { name: "product", label: "商品 / SKU", placeholder: "", defaultValue: `${value.product_name} / ${value.sku_name}`, disabled: true },
+      { name: "type", label: "售后类型", placeholder: "", defaultValue: value.type_text, disabled: true },
+      { name: "reasonText", label: "申请原因", placeholder: "", defaultValue: value.reason, disabled: true },
+      { name: "description", label: "申请说明", placeholder: "", defaultValue: value.description || "-", disabled: true },
+      { name: "amount", label: "退款金额", placeholder: "", defaultValue: `¥${(value.refund_amount / 100).toFixed(2)}`, disabled: true },
+      { name: "statusText", label: "售后状态", placeholder: "", defaultValue: value.status_text, disabled: true },
+      { name: "refundNo", label: "退款单号", placeholder: "", defaultValue: value.refund?.refund_no || "尚未创建", disabled: true },
+      { name: "refundStatus", label: "退款状态", placeholder: "", defaultValue: value.refund?.status_text || "-", disabled: true },
+      { name: "retryCount", label: "退款尝试次数", placeholder: "", defaultValue: String(value.refund?.retry_count ?? 0), disabled: true },
+      { name: "lastError", label: "最近错误", placeholder: "", defaultValue: value.refund?.last_error || value.refund?.failure_reason || "-", disabled: true }
+    ];
+    let operationFields: ModalField[] = [];
+    if (canReview && value.status === 1) {
+      operationFields = [
+        { name: "operation", label: "审核结果", placeholder: "", type: "select", options: [{ label: "同意并原路退款", value: "approve" }, { label: "拒绝申请", value: "reject" }] },
+        { name: "reason", label: "拒绝原因", placeholder: "拒绝申请时必填" }
+      ];
+    } else if (canReview && value.status === 2) {
+      operationFields = [{ name: "operation", label: "退款操作", placeholder: "", type: "select", options: [{ label: "主动查询退款结果", value: "sync" }] }];
+    } else if (canReview && value.status === 6) {
+      operationFields = [{ name: "operation", label: "退款操作", placeholder: "", type: "select", options: [{ label: "重新发起原路退款", value: "retry" }] }];
+    }
+    setActionModal({
+      pageId: "aftersale-list",
+      actionLabel: "售后详情",
+      title: `售后详情 · ${value.after_sale_no}`,
+      description: value.images.length > 0 ? `售后凭证：${value.images.join("、")}` : "该申请未上传售后凭证。",
+      entityId: value.id,
+      fields: [...detailFields, ...operationFields],
+      readOnly: operationFields.length === 0
+    });
+    setActionModalError("");
+  };
   const openUserDetail = async (row: TableRow) => {
     const userID = Number(row.id);
     if (!Number.isFinite(userID) || userID <= 0) return;
@@ -807,33 +882,59 @@ const App: React.FC = () => {
       setAccountModalOpen(true);
     }
   };
-  const openTicketDetail = () => navigateToPage("ticket-detail");
-  const openReconciliation = () => navigateToPage("reconciliation");
 
-  const loadMerchantData = async () => {
+  const loadMerchantData = async (queryOverrides: Partial<Record<string, MerchantListQuery>> = {}) => {
     setApiState((current) => ({ ...current, loading: true, error: "" }));
     try {
-    const user = await merchantApi.me();
-    const can = (permission: string) => user.permissions.includes(permission);
-    const [overview, analytics, products, categories, orders, inventoryAlerts, accounts, roles, customerOverview, customers, afterSales, coupons] = await Promise.all([
-      can("dashboard:read") ? merchantApi.dashboardOverview() : Promise.resolve(emptyOverview),
-      can("dashboard:read") ? merchantApi.dashboardAnalytics(10, 10) : Promise.resolve(emptyAnalytics),
-      can("catalog:read") ? merchantApi.products({ page: 1, pageSize: 20 }) : Promise.resolve(emptyPage<MerchantProduct>()),
-      can("catalog:read") ? merchantApi.categories() : Promise.resolve([]),
-      can("order:read") ? merchantApi.orders({ page: 1, pageSize: 20 }) : Promise.resolve(emptyPage<MerchantOrder>()),
-      can("inventory:read") ? merchantApi.inventoryAlerts({ page: 1, pageSize: 20 }) : Promise.resolve(emptyPage<MerchantInventoryAlert>()),
-      can("account:read") ? merchantApi.accounts({ page: 1, pageSize: 50 }) : Promise.resolve(undefined),
-      can("account:read") ? merchantApi.roles() : Promise.resolve(undefined),
-      can("customer:read") ? merchantApi.customerOverview() : Promise.resolve(undefined),
-      can("customer:read") ? merchantApi.customers({ page: 1, pageSize: 20 }) : Promise.resolve(undefined),
-      can("after_sale:read") ? merchantApi.afterSales({ page: 1, pageSize: 20 }) : Promise.resolve(undefined),
-      can("marketing:read") ? merchantApi.coupons({ page: 1, pageSize: 20 }) : Promise.resolve(undefined)
-    ]);
+      const user = await merchantApi.me();
+      const can = (permission: string) => user.permissions.includes(permission);
+      const queryFor = (pageId: string) => queryOverrides[pageId] ?? listQueries[pageId] ?? createMerchantListQuery();
+      const productQuery = queryFor("products");
+      const categoryQuery = queryFor("categories");
+      const orderQuery = queryFor("order-list");
+      const inventoryQuery = queryFor("inventory");
+      const inventoryLogQuery = queryFor("inventory-logs");
+      const employeeQuery = queryFor("employees");
+      const customerQuery = queryFor("user-list");
+      const afterSaleQuery = queryFor("aftersale-list");
+      const couponQuery = queryFor("coupon-management");
+      const settlementQuery = queryFor("merchant-settlements");
+      const settlementEntryQuery = queryFor("settlement-entries");
+      const [overview, analytics, products, categories, orders, inventoryAlerts, inventoryLogs, accounts, roles, customerOverview, customers, afterSales, coupons, settlements, settlementEntries] = await Promise.all([
+        can("dashboard:read") ? merchantApi.dashboardOverview() : Promise.resolve(emptyOverview),
+        can("dashboard:read") ? merchantApi.dashboardAnalytics(10, 10) : Promise.resolve(emptyAnalytics),
+        can("catalog:read") ? merchantApi.products({ page: productQuery.page, pageSize: productQuery.pageSize, keyword: productQuery.keyword, status: optionalInteger(productQuery.status) }) : Promise.resolve(emptyPage<MerchantProduct>()),
+        can("catalog:read") ? merchantApi.categories() : Promise.resolve([]),
+        can("order:read") ? merchantApi.orders({ page: orderQuery.page, pageSize: orderQuery.pageSize, status: optionalInteger(orderQuery.status), keyword: orderQuery.keyword }) : Promise.resolve(emptyPage<MerchantOrder>()),
+        can("inventory:read") ? merchantApi.inventoryAlerts({ page: inventoryQuery.page, pageSize: inventoryQuery.pageSize, keyword: inventoryQuery.keyword }) : Promise.resolve(emptyPage<MerchantInventoryAlert>()),
+        can("inventory:read") ? merchantApi.inventoryLogs({ page: inventoryLogQuery.page, pageSize: inventoryLogQuery.pageSize, productId: optionalInteger(inventoryLogQuery.productId), skuId: optionalInteger(inventoryLogQuery.skuId), changeType: inventoryLogQuery.changeType }) : Promise.resolve(undefined),
+        can("account:read") ? merchantApi.accounts({ page: employeeQuery.page, pageSize: employeeQuery.pageSize, keyword: employeeQuery.keyword, role: employeeQuery.role, status: optionalInteger(employeeQuery.status) }) : Promise.resolve(undefined),
+        can("account:read") ? merchantApi.roles() : Promise.resolve(undefined),
+        can("customer:read") ? merchantApi.customerOverview() : Promise.resolve(undefined),
+        can("customer:read") ? merchantApi.customers({ page: customerQuery.page, pageSize: customerQuery.pageSize, keyword: customerQuery.keyword, repeatOnly: customerQuery.repeatOnly === "" ? undefined : customerQuery.repeatOnly === "true" }) : Promise.resolve(undefined),
+        can("after_sale:read") ? merchantApi.afterSales({ page: afterSaleQuery.page, pageSize: afterSaleQuery.pageSize, status: optionalInteger(afterSaleQuery.status) }) : Promise.resolve(undefined),
+        can("marketing:read") ? merchantApi.coupons({ page: couponQuery.page, pageSize: couponQuery.pageSize, status: optionalInteger(couponQuery.status) }) : Promise.resolve(undefined),
+        can("settlement:read") ? merchantApi.settlements({ page: settlementQuery.page, pageSize: settlementQuery.pageSize, status: optionalInteger(settlementQuery.status) }) : Promise.resolve(undefined),
+        can("settlement:read") ? merchantApi.settlementEntries({ page: settlementEntryQuery.page, pageSize: settlementEntryQuery.pageSize, entryType: settlementEntryQuery.changeType }) : Promise.resolve(undefined)
+      ]);
+      const categoryKeyword = categoryQuery.keyword.trim().toLocaleLowerCase();
+      const categoryPageItems = categoryKeyword
+        ? categories.filter((category) => category.name.toLocaleLowerCase().includes(categoryKeyword))
+        : categories;
       setMerchantUser(user);
-    setMerchantAccounts(accounts?.list ?? []);
-    setMerchantRoles(roles ?? []);
-    setMerchantCategories(categories); setMerchantInventoryAlerts(inventoryAlerts.list); setMerchantAfterSales(afterSales?.list ?? []); setMerchantCoupons(coupons?.list ?? []);
-    setRemotePages(buildMerchantRemotePages(adminPages, { user, overview, analytics, products, categories, orders, inventoryAlerts, accounts, roles, customerOverview, customers, afterSales, coupons }));
+      setMerchantAccounts(accounts?.list ?? []);
+      setMerchantRoles(roles ?? []);
+      setMerchantCategories(categories);
+      setMerchantInventoryAlerts(inventoryAlerts.list);
+      setMerchantAfterSales(afterSales?.list ?? []);
+      setMerchantCoupons(coupons?.list ?? []);
+      const nextRemotePages = buildMerchantRemotePages(adminPages, { user, overview, analytics, products, categories, categoryPageItems, orders, inventoryAlerts, inventoryLogs, accounts, roles, customerOverview, customers, afterSales, coupons, settlements, settlementEntries });
+      setRemotePages((current) => ({
+        ...nextRemotePages,
+        ...(current["order-detail"] ? { "order-detail": current["order-detail"] } : {}),
+        ...(current["user-detail"] ? { "user-detail": current["user-detail"] } : {}),
+        ...(current["merchant-settlement-detail"] ? { "merchant-settlement-detail": current["merchant-settlement-detail"] } : {})
+      }));
       setApiState({ loading: false, error: "", connected: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "接口同步失败";
@@ -853,6 +954,35 @@ const App: React.FC = () => {
     void loadMerchantData();
   }, []);
 
+  useEffect(() => subscribeMerchantAuthExpired(() => {
+    setMerchantUser(undefined);
+    setMerchantAccounts([]);
+    setMerchantRoles([]);
+    setRemotePages({});
+    setApiState({ loading: false, error: "登录状态已过期，请重新登录", connected: false });
+    setLoginForm((current) => ({ ...current, password: "" }));
+    setAccountModalOpen(true);
+  }), []);
+
+  useEffect(() => {
+    if (!operationNotice) return;
+    const timer = window.setTimeout(() => setOperationNotice(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [operationNotice]);
+
+  const updateListQuery = (pageId: string, patch: Partial<MerchantListQuery>) => {
+    setListQueries((current) => ({
+      ...current,
+      [pageId]: { ...(current[pageId] ?? createMerchantListQuery()), ...patch }
+    }));
+  };
+
+  const runListQuery = (pageId: string, patch: Partial<MerchantListQuery> = {}) => {
+    const next = { ...(listQueries[pageId] ?? createMerchantListQuery()), ...patch };
+    setListQueries((current) => ({ ...current, [pageId]: next }));
+    void loadMerchantData({ [pageId]: next });
+  };
+
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setApiState({ loading: true, error: "", connected: false });
@@ -861,6 +991,8 @@ const App: React.FC = () => {
       storeMerchantAuth(auth);
       setMerchantUser(auth.user);
       await loadMerchantData();
+      setLoginForm((current) => ({ ...current, password: "" }));
+      setAccountModalOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "登录失败";
       setApiState({ loading: false, error: message, connected: false });
@@ -882,11 +1014,13 @@ const App: React.FC = () => {
     setMerchantRoles([]);
     setRemotePages({});
     setApiState({ loading: false, error: "", connected: false });
+    setLoginForm((current) => ({ ...current, password: "" }));
+    setAccountModalOpen(true);
   };
 
   const handleToolbarAction = (page: ListPageData, actionLabel: string) => {
 	if (!canWritePage(page.id, merchantUser)) return;
-    const config = buildActionModalConfig(page, actionLabel);
+    const config = buildActionModalConfig(page, actionLabel, merchantCategories);
     if (!config) return;
     if (page.id === "employees" && merchantUser?.role === "admin") {
       const roleField = config.fields.find((field) => field.name === "role");
@@ -937,26 +1071,48 @@ const App: React.FC = () => {
           if (operation === "delete") await merchantApi.deleteProduct(actionModal.entityId);
           else {
             await merchantApi.updateProduct(actionModal.entityId, productPayload);
-            const detail = await merchantApi.productDetail(actionModal.entityId);
-            const skuPrice = Math.round(Number(readValue("skuPrice")) * 100);
-            if (readValue("skuName") && Number.isFinite(skuPrice)) {
-              const skuPayload = { name: readValue("skuName"), image: cover, price: skuPrice, stock: detail.skus[0]?.stock ?? Number(readValue("skuStock")), low_stock_threshold: detail.skus[0]?.low_stock_threshold ?? 0, status: detail.skus[0]?.status ?? 1 };
-              if (detail.skus[0]) await merchantApi.updateSku(detail.id, detail.skus[0].id, skuPayload); else await merchantApi.createSku(detail.id, skuPayload);
-            }
             if (operation === "on_sale") await merchantApi.setProductOnSale(actionModal.entityId);
             if (operation === "off_sale") await merchantApi.setProductOffSale(actionModal.entityId);
           }
         } else await merchantApi.createProduct(productPayload);
+        await loadMerchantData();
+      } else if (actionModal.pageId === "sku") {
+        const productId = actionModal.productId;
+        if (!productId) throw new Error("商品 ID 不存在");
+        if (actionModal.skuId && readValue("operation") === "delete") {
+          await merchantApi.deleteSku(productId, actionModal.skuId);
+        } else {
+          const name = readValue("name");
+          const price = Math.round(Number(readValue("price")) * 100);
+          const stock = Number(readValue("stock"));
+          const lowStockThreshold = Number(readValue("lowStockThreshold"));
+          const status = Number(readValue("status"));
+          if (!name) throw new Error("请输入 SKU 名称");
+          if (!Number.isFinite(price) || price <= 0) throw new Error("SKU 售价必须大于 0");
+          if (!Number.isInteger(stock) || stock < 0) throw new Error("SKU 库存必须是非负整数");
+          if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) throw new Error("低库存预警线必须是非负整数");
+          if (status !== 0 && status !== 1) throw new Error("SKU 状态不合法");
+          let image = readValue("image");
+          const imageFile = values.imageFile;
+          if (imageFile instanceof File && imageFile.size > 0) image = (await merchantApi.uploadImage(imageFile, "product")).url;
+          const payload = { name, image, price, stock, low_stock_threshold: lowStockThreshold, status };
+          if (actionModal.skuId) await merchantApi.updateSku(productId, actionModal.skuId, payload);
+          else await merchantApi.createSku(productId, payload);
+        }
         await loadMerchantData();
       } else if (actionModal.pageId === "categories") {
         if (!loadStoredMerchantAuth()) throw new Error("请先在右上角账号入口登录商户后台");
         const parentIdText = readValue("parentId");
         const sortText = readValue("sort");
         if (!readValue("name")) throw new Error("请输入分类名称");
+        const parentId = parentIdText ? Number(parentIdText) : 0;
+        const sort = sortText ? Number(sortText) : 0;
+        if (!Number.isInteger(parentId) || parentId < 0) throw new Error("上级分类 ID 必须是非负整数");
+        if (!Number.isInteger(sort)) throw new Error("排序必须是整数");
         const payload = {
-          parent_id: parentIdText ? Number(parentIdText) : 0,
+          parent_id: parentId,
           name: readValue("name"),
-          sort: sortText ? Number(sortText) : 0,
+          sort,
           status: readValue("status") ? Number(readValue("status")) : 1
         };
         if (actionModal.entityId && readValue("operation") === "delete") await merchantApi.deleteCategory(actionModal.entityId);
@@ -965,19 +1121,44 @@ const App: React.FC = () => {
         await loadMerchantData();
       } else if (actionModal.pageId === "inventory") {
         if (!actionModal.entityId) throw new Error("SKU ID 不存在");
-        const stock = Number(readValue("stock")); if (!Number.isInteger(stock) || stock < 0) throw new Error("库存必须是非负整数");
-        await merchantApi.adjustStock(actionModal.entityId, { stock, remark: readValue("remark") }); await loadMerchantData();
+        const stock = Number(readValue("stock"));
+        const lowStockThreshold = Number(readValue("lowStockThreshold"));
+        if (!Number.isInteger(stock) || stock < 0) throw new Error("库存必须是非负整数");
+        if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) throw new Error("低库存预警线必须是非负整数");
+        if (!readValue("remark")) throw new Error("请填写库存调整原因");
+        await merchantApi.adjustStock(actionModal.entityId, { stock, low_stock_threshold: lowStockThreshold, remark: readValue("remark") }); await loadMerchantData();
       } else if (actionModal.pageId === "order-detail") {
         if (!actionModal.entityId) throw new Error("订单 ID 不存在");
         const deliveryType = readValue("deliveryType");
+        if (deliveryType === "express" && (!readValue("company") || !readValue("trackingNo"))) throw new Error("普通快递必须填写物流公司和运单号");
         await merchantApi.shipOrder(actionModal.entityId, { delivery_type: deliveryType, logistics_company: readValue("company"), tracking_no: readValue("trackingNo"), estimated_arrival_at: readValue("estimatedArrivalAt") || undefined });
         const detail = await merchantApi.orderDetail(actionModal.entityId); setRemotePages((current) => ({ ...current, "order-detail": buildMerchantOrderDetailPage(adminPages, detail, Boolean(merchantUser?.permissions.includes("order:ship"))) })); await loadMerchantData();
       } else if (actionModal.pageId === "aftersale-list") {
         if (!actionModal.entityId) throw new Error("售后 ID 不存在");
-        if (readValue("operation") === "approve") await merchantApi.approveAfterSale(actionModal.entityId); else { if (!readValue("reason")) throw new Error("请填写拒绝原因"); await merchantApi.rejectAfterSale(actionModal.entityId, readValue("reason")); }
+        const operation = readValue("operation");
+        if (operation === "approve" || operation === "retry") await merchantApi.approveAfterSale(actionModal.entityId);
+        else if (operation === "sync") await merchantApi.syncAfterSaleRefund(actionModal.entityId);
+        else if (operation === "reject") {
+          if (!readValue("reason")) throw new Error("请填写拒绝原因");
+          await merchantApi.rejectAfterSale(actionModal.entityId, readValue("reason"));
+        } else throw new Error("当前售后没有可执行的操作");
         await loadMerchantData();
       } else if (actionModal.pageId === "coupon-management") {
-        const payload = { name: readValue("name"), threshold_amount: Math.round(Number(readValue("threshold")) * 100), discount_amount: Math.round(Number(readValue("discount")) * 100), total_quantity: Number(readValue("quantity")), per_user_limit: Number(readValue("perUserLimit")), status: Number(readValue("status")), start_at: new Date(readValue("startAt")).toISOString(), end_at: new Date(readValue("endAt")).toISOString() };
+        const name = readValue("name");
+        const thresholdAmount = Math.round(Number(readValue("threshold")) * 100);
+        const discountAmount = Math.round(Number(readValue("discount")) * 100);
+        const totalQuantity = Number(readValue("quantity"));
+        const perUserLimit = Number(readValue("perUserLimit"));
+        const startAt = new Date(readValue("startAt"));
+        const endAt = new Date(readValue("endAt"));
+        if (!name) throw new Error("请输入优惠券名称");
+        if (!Number.isFinite(discountAmount) || discountAmount <= 0) throw new Error("优惠金额必须大于 0");
+        if (!Number.isFinite(thresholdAmount) || thresholdAmount < discountAmount) throw new Error("使用门槛不能小于优惠金额");
+        if (!Number.isInteger(totalQuantity) || totalQuantity <= 0) throw new Error("发行数量必须是正整数");
+        if (!Number.isInteger(perUserLimit) || perUserLimit <= 0) throw new Error("每人限领必须是正整数");
+        if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) throw new Error("请输入有效的开始和结束时间");
+        if (endAt <= startAt) throw new Error("结束时间必须晚于开始时间");
+        const payload = { name, threshold_amount: thresholdAmount, discount_amount: discountAmount, total_quantity: totalQuantity, per_user_limit: perUserLimit, status: Number(readValue("status")), start_at: startAt.toISOString(), end_at: endAt.toISOString() };
         if (actionModal.entityId) await merchantApi.updateCoupon(actionModal.entityId, payload); else await merchantApi.createCoupon(payload); await loadMerchantData();
       } else if (actionModal.pageId === "employees") {
         if (!loadStoredMerchantAuth()) throw new Error("请先在右上角账号入口登录商户后台");
@@ -997,7 +1178,10 @@ const App: React.FC = () => {
           await merchantApi.createAccount({ username, nickname, password: newPassword, role, status });
         }
         await loadMerchantData();
+      } else {
+        throw new Error("当前操作尚未接入后端");
       }
+      setOperationNotice(`${actionModal.title}已完成，最新数据已经同步`);
       setActionModal(undefined);
     } catch (error) {
       setActionModalError(error instanceof Error ? error.message : "提交失败");
@@ -1023,15 +1207,13 @@ const App: React.FC = () => {
             const childPages = group?.pageIds
               .map((pageId) => pages.find((page) => page.id === pageId))
               .filter((page): page is AdminPageData => Boolean(page)) ?? [];
+            if (!group || childPages.length === 0) return null;
             return (
               <section className="module-section" key={module.id}>
                 <button
-                  className={`module-button ${active ? "active" : ""} ${group ? "" : "disabled"}`}
-          disabled={!group || childPages.length === 0}
+                  className={`module-button ${active ? "active" : ""}`}
                   onClick={() => {
-            if (!group || childPages.length === 0) return;
-                    setSelectedProduct(undefined);
-            navigateToPage(childPages[0].id);
+                    navigateToPage(childPages[0].id);
                   }}
                 >
                   <span className="module-main">
@@ -1044,22 +1226,17 @@ const App: React.FC = () => {
                     {active ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </span>
                 </button>
-                {group ? (
-                  <div className={`child-menu ${active ? "open" : ""}`}>
+                <div className={`child-menu ${active ? "open" : ""}`}>
                     {childPages.map((page) => {
                       const childActive = page.id === activePageId
-                        || (activePageId === "product-edit" && page.id === "products")
                         || (activePageId === "order-detail" && page.id === "order-list")
-                        || (activePageId === "aftersale-detail" && page.id === "aftersale-list")
                         || (activePageId === "user-detail" && page.id === "user-list")
-                        || (activePageId === "ticket-detail" && page.id === "support-tickets")
-                        || (activePageId === "reconciliation" && page.id === "merchant-settlements");
+                        || (activePageId === "merchant-settlement-detail" && page.id === "merchant-settlements");
                       return (
                         <button
                           className={childActive ? "active" : ""}
                           key={page.id}
                           onClick={() => {
-                            setSelectedProduct(undefined);
                             navigateToPage(page.id);
                           }}
                         >
@@ -1068,25 +1245,19 @@ const App: React.FC = () => {
                         </button>
                       );
                     })}
-                  </div>
-                ) : null}
+                </div>
               </section>
             );
           })}
         </nav>
         <div className="merchant-card">
-          <strong>{merchantUser?.merchant_name ?? "默认商户"}</strong>
-          <span>{merchantUser ? `${merchantUser.role} · 已认证` : "旗舰店 · 已认证"}</span>
+          <strong>{merchantUser?.merchant_name ?? "尚未登录"}</strong>
+          <span>{merchantUser ? `${merchantUser.role} · 已认证` : "请登录商户后台"}</span>
         </div>
       </aside>
       <main>
         <header className="topbar">
           <div className="topbar-crumb">{activeGroup.title.replace(/^[0-9]{2} /, "")} / {pageTitle}</div>
-          <div className="search-box">
-            <Search size={16} />
-            <input placeholder="搜索订单、商品、用户" />
-          </div>
-          <button className="icon-button"><Bell size={18} /></button>
           <button className="user-chip" onClick={() => setAccountModalOpen(true)} type="button">
             <UserRound size={18} />
             <span>{merchantUser?.nickname || merchantUser?.username || "管理员"}</span>
@@ -1099,21 +1270,40 @@ const App: React.FC = () => {
             <p>{pageDescription}</p>
           </div>
         </section>
+        {apiState.error && merchantUser ? (
+          <section className="api-feedback error" role="alert">
+            <div><strong>数据加载失败</strong><span>{apiState.error}</span></div>
+            <button className="ghost-button compact" disabled={apiState.loading} onClick={() => void loadMerchantData()} type="button">重新加载</button>
+          </section>
+        ) : null}
+        {operationNotice ? (
+          <section className="api-feedback success" role="status">
+            <div><strong><CheckCircle2 size={16} />操作成功</strong><span>{operationNotice}</span></div>
+            <button aria-label="关闭成功提示" className="icon-button compact" onClick={() => setOperationNotice("")} title="关闭" type="button"><X size={15} /></button>
+          </section>
+        ) : null}
+        {apiState.loading && merchantUser ? <div className="api-progress" role="status">正在同步最新数据...</div> : null}
         <PageContent
           page={activePage}
 		  merchantUser={merchantUser}
-          productFieldValues={productFieldValues}
+          listQuery={activeListQuery}
+          loading={apiState.loading}
+          onListQueryChange={(patch) => updateListQuery(activePage.id, patch)}
+          onListSearch={() => runListQuery(activePage.id, { page: 1 })}
+          onListReset={() => runListQuery(activePage.id, createMerchantListQuery())}
+          onListRefresh={() => runListQuery(activePage.id)}
+          onListPageChange={(page) => runListQuery(activePage.id, { page })}
+          onDashboardNavigate={navigateToPage}
           onToolbarAction={handleToolbarAction}
           onProductEdit={openProductEdit}
       onEmployeeEdit={openEmployeeEdit}
           onOrderDetail={openOrderDetail}
           onAfterSaleDetail={openAfterSaleDetail}
           onUserDetail={openUserDetail}
-          onTicketDetail={openTicketDetail}
-          onReconciliation={openReconciliation}
           onCategoryEdit={openCategoryEdit}
           onInventoryAdjust={openInventoryAdjust}
           onCouponEdit={openCouponEdit}
+          onSettlementDetail={openSettlementDetail}
           onDetailAction={handleDetailAction}
         />
       </main>
@@ -1124,7 +1314,7 @@ const App: React.FC = () => {
           merchantUser={merchantUser}
           onLoginFormChange={(field, value) => setLoginForm((current) => ({ ...current, [field]: value }))}
           onLogin={handleLogin}
-          onRefresh={loadMerchantData}
+          onRefresh={() => void loadMerchantData()}
           onLogout={handleLogout}
           onClose={() => setAccountModalOpen(false)}
         />
@@ -1136,6 +1326,8 @@ const App: React.FC = () => {
           submitting={actionModalSubmitting}
           onClose={() => setActionModal(undefined)}
           onSubmit={handleActionModalSubmit}
+          onCreateSku={openCreateSku}
+          onEditSku={openEditSku}
         />
       ) : null}
     </div>

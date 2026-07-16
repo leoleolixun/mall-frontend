@@ -1,0 +1,145 @@
+name: Deploy UniApp H5
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "mall-uniapp/**"
+      - ".github/workflows/deploy-uniapp-h5.yml"
+  workflow_dispatch:
+
+env:
+  APP_DIR: mall-uniapp
+  DEPLOY_DIR: /opt/mall/mobile
+
+jobs:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(join(github.event.commits.*.message, '\n'), '[deploy]')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Contract and order flow tests
+        working-directory: ${{ env.APP_DIR }}
+        run: npm test
+
+      - name: Audit deployed runtime dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build H5
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run build:h5
+
+      - name: Build WeChat Mini Program
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run build:mp-weixin
+
+      - name: Install Playwright browser
+        working-directory: ${{ env.APP_DIR }}
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: H5 browser acceptance tests
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run test:e2e:h5
+
+      - name: Upload browser traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mall-uniapp-playwright-${{ github.sha }}
+          path: ${{ env.APP_DIR }}/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Mini Program package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mall-mp-weixin-${{ github.sha }}
+          path: ${{ env.APP_DIR }}/dist/build/mp-weixin
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Package H5 dist
+        run: tar -C "${{ env.APP_DIR }}/dist/build/h5" -czf mall-uniapp-h5.tar.gz .
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.SERVER_PORT }}" "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload H5 release
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.SERVER_PORT }}" \
+            mall-uniapp-h5.tar.gz \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/mall-uniapp-h5.tar.gz"
+
+      - name: Deploy H5 on server
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SERVER_PORT }}" \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'EOF'
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            SUDO="sudo"
+          fi
+
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+          RELEASES_DIR="$DEPLOY_DIR/releases"
+          RELEASE_DIR="$RELEASES_DIR/${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          $SUDO mkdir -p "$RELEASES_DIR"
+          if [ -d "$DEPLOY_DIR/dist" ] && [ ! -L "$DEPLOY_DIR/dist" ]; then
+            LEGACY_DIR="$RELEASES_DIR/legacy-$(date +%Y%m%d%H%M%S)"
+            $SUDO mv "$DEPLOY_DIR/dist" "$LEGACY_DIR"
+            $SUDO ln -s "$LEGACY_DIR" "$DEPLOY_DIR/dist"
+          fi
+          PREVIOUS_RELEASE="$($SUDO readlink -f "$DEPLOY_DIR/dist" 2>/dev/null || true)"
+          $SUDO rm -rf "$RELEASE_DIR"
+          $SUDO mkdir -p "$RELEASE_DIR"
+          $SUDO tar -xzf /tmp/mall-uniapp-h5.tar.gz -C "$RELEASE_DIR"
+          test -f "$RELEASE_DIR/index.html"
+
+          rollback() {
+            status=$?
+            trap - ERR
+            if [ "$status" -ne 0 ] && [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
+              echo "UniApp H5 deployment failed, restoring $PREVIOUS_RELEASE"
+              $SUDO ln -sfn "$PREVIOUS_RELEASE" "$DEPLOY_DIR/dist.rollback"
+              $SUDO mv -Tf "$DEPLOY_DIR/dist.rollback" "$DEPLOY_DIR/dist"
+              $SUDO systemctl reload nginx || true
+            fi
+            $SUDO rm -rf "$RELEASE_DIR"
+            exit "$status"
+          }
+          trap rollback ERR
+
+          $SUDO ln -sfn "$RELEASE_DIR" "$DEPLOY_DIR/dist.next"
+          $SUDO mv -Tf "$DEPLOY_DIR/dist.next" "$DEPLOY_DIR/dist"
+          $SUDO nginx -t
+          $SUDO systemctl reload nginx
+          curl -kfsS https://127.0.0.1/mobile/ -H 'Host: mall.leedu.ac.cn' | grep -q 'id="app"'
+          trap - ERR
+          $SUDO find "$RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r $SUDO rm -rf
+          rm -f /tmp/mall-uniapp-h5.tar.gz
+          EOF

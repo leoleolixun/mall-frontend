@@ -1,9 +1,8 @@
 import type React from "react";
-import { Bell, ShoppingCart } from "lucide-react";
+import { ShoppingCart } from "lucide-react";
 import { Outlet, useLocation } from "@tanstack/react-router";
 
 import { useMallApp } from "@/app/context/MallAppContext";
-import { productPages } from "@/app/navigation";
 import { Header, Shell } from "@/shared/components";
 
 const getActiveHeader = (pathname: string): string => {
@@ -13,13 +12,7 @@ const getActiveHeader = (pathname: string): string => {
   if (pathname === "/") {
     return "首页";
   }
-  if (pathname === "/presale") {
-    return "新品";
-  }
-  if (pathname === "/bundle") {
-    return "热卖";
-  }
-  if (pathname.startsWith("/products") || productPages.some((page) => pathname.includes(page.key))) {
+  if (pathname.startsWith("/products")) {
     return "分类";
   }
   return "首页";
@@ -51,10 +44,8 @@ export const MainLayout: React.FC = () => {
         onCart={() => navigateToPage("cart")}
         onLogin={() => navigateToPage("auth")}
         onLogout={() => void handleLogout()}
-        onMessages={() => navigateProtected("/account/messages")}
         onNavigate={navigateToPage}
         onOrders={() => navigateProtected("/account/orders")}
-        onSecurity={() => navigateProtected("/account/security")}
         onSearch={(value) => {
           setGlobalSearch(value);
           navigateToPage("product-list");
@@ -68,9 +59,6 @@ export const MainLayout: React.FC = () => {
       <button className="floating-cart" onClick={() => navigateToPage("cart")} aria-label="打开购物车">
         <ShoppingCart size={20} />
         {cartCount > 0 ? <span>{cartCount}</span> : null}
-      </button>
-      <button className="floating-bell" onClick={() => navigateProtected("/account/messages")} aria-label="消息提醒">
-        <Bell size={20} />
       </button>
       {notice ? <div className="toast" role="status" aria-live="polite">{notice}</div> : null}
     </Shell>

@@ -3,8 +3,17 @@ import type { PayChannel, PaymentResponse, PayScene } from "@/api/client";
 
 const PENDING_PAYMENT_STORAGE_KEY = "mall_pc_pending_payment_no";
 
+type CreatePaymentTarget =
+  | { order_id: number; trade_id?: never }
+  | { order_id?: never; trade_id: number };
+
+type CreatePaymentPayload = CreatePaymentTarget & {
+  pay_channel: PayChannel;
+  pay_scene?: PayScene;
+};
+
 export const paymentApi = {
-  create(payload: { order_id: number; pay_channel: PayChannel; pay_scene?: PayScene }): Promise<PaymentResponse> {
+  create(payload: CreatePaymentPayload): Promise<PaymentResponse> {
     return request<PaymentResponse>("/payments", {
       method: "POST",
       body: JSON.stringify(payload)
@@ -12,6 +21,11 @@ export const paymentApi = {
   },
   detail(paymentNo: string): Promise<PaymentResponse> {
     return request<PaymentResponse>(`/payments/${paymentNo}`);
+  },
+  sync(paymentNo: string): Promise<PaymentResponse> {
+    return request<PaymentResponse>(`/payments/${paymentNo}/sync`, {
+      method: "POST"
+    });
   },
   pendingStorage: {
     read(): string {

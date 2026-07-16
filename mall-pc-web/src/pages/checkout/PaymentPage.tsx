@@ -1,9 +1,9 @@
 import type React from "react";
 import { useMemo, useRef, useState } from "react";
-import { CheckCircle2, CreditCard, QrCode, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
+import { CheckCircle2, ExternalLink, ShieldCheck, WalletCards } from "lucide-react";
 
 import { moneyFromCent } from "@/api/client";
-import type { OrderResponse, PayChannel, PaymentResponse, PayScene } from "@/api/client";
+import type { OrderResponse, PayChannel, PaymentResponse, PayScene, TradeResponse } from "@/api/client";
 import { paymentMethods } from "@/features/payment/constants/paymentMethods";
 import { Chip } from "@/shared/components/Chip";
 import { HeroTitle } from "@/shared/components/HeroTitle";
@@ -11,19 +11,17 @@ import { SummaryRow } from "@/shared/components/SummaryRow";
 import { formatPrice } from "@/shared/utils/money";
 
 const channelIcon: Record<PayChannel, React.ReactNode> = {
-  alipay: <WalletCards size={20} />,
-  mock: <CreditCard size={20} />,
-  stripe: <CreditCard size={20} />,
-  wechat: <Smartphone size={20} />
+  alipay: <WalletCards size={20} />
 };
 
 export const PaymentPage: React.FC<{
   order: OrderResponse | null;
+  trade: TradeResponse | null;
   payment: PaymentResponse | null;
   onBackCheckout: () => void;
   onCheckPaymentStatus: () => Promise<void>;
   onCreatePayment: (channel: PayChannel, scene?: PayScene) => Promise<PaymentResponse | null>;
-}> = ({ order, payment, onBackCheckout, onCheckPaymentStatus, onCreatePayment }) => {
+}> = ({ order, trade, payment, onBackCheckout, onCheckPaymentStatus, onCreatePayment }) => {
   const [selectedChannel, setSelectedChannel] = useState<PayChannel>("alipay");
   const [creating, setCreating] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -38,8 +36,10 @@ export const PaymentPage: React.FC<{
   );
   const payParams = payment?.pay_params;
   const payUrl = payParams?.pay_url;
-  const qrCodeUrl = payParams?.qr_code_url ?? payParams?.code_url;
   const isAlipayRedirect = payment?.pay_channel === "alipay" && Boolean(payUrl);
+  const isTradePayment = Boolean(trade);
+  const referenceNo = trade?.trade_no ?? order?.order_no ?? "-";
+  const payableAmount = payment?.amount ?? trade?.payable_amount ?? order?.payable_amount ?? 0;
 
   const handleCreatePayment = async (): Promise<void> => {
     if (!selectedMethod.enabled || creatingRef.current) {
@@ -82,11 +82,11 @@ export const PaymentPage: React.FC<{
     setCompleting(false);
   };
 
-  if (!order) {
+  if (!trade && !order) {
     return (
       <section className="panel payment-empty">
-        <HeroTitle title="订单支付" />
-        <p>当前没有待支付订单，请先提交订单。</p>
+        <HeroTitle title="交易支付" />
+        <p>当前没有待支付交易，请先提交订单。</p>
         <button className="primary-button solid" onClick={onBackCheckout} type="button">返回确认订单</button>
       </section>
     );
@@ -95,7 +95,7 @@ export const PaymentPage: React.FC<{
   return (
     <>
       <div className="title-row">
-        <HeroTitle title="订单支付" />
+        <HeroTitle title={isTradePayment ? "交易支付" : "订单支付"} />
         <div className="steps">
           {["购物车", "确认订单", "支付", "完成"].map((item, index) => <Chip active={index === 2} key={item}>{item}</Chip>)}
         </div>
@@ -127,7 +127,7 @@ export const PaymentPage: React.FC<{
           <div className="payment-request-panel">
             <div>
               <strong>确认支付</strong>
-              <p>点击后将跳转至{selectedMethod.label}收银台，请核对右侧订单金额。</p>
+              <p>点击后将跳转至{selectedMethod.label}收银台，请核对右侧交易金额。</p>
             </div>
             <button className="primary-button solid" disabled={creating || !selectedMethod.enabled} onClick={() => void handleCreatePayment()} type="button">
               {creating ? "正在跳转" : "去支付"}
@@ -137,8 +137,8 @@ export const PaymentPage: React.FC<{
           {payment ? (
             <section className="payment-qr-panel">
               <div className="payment-qr-box">
-                <QrCode size={72} />
-                <span>{payment.pay_channel === "wechat" ? "微信扫码支付" : payment.pay_channel === "alipay" ? "支付宝网页支付" : "支付二维码"}</span>
+                <ExternalLink size={72} />
+                <span>支付宝网页支付</span>
               </div>
               <div>
                 <h3>支付单已创建</h3>
@@ -146,9 +146,8 @@ export const PaymentPage: React.FC<{
                 <p>支付场景：{payment.pay_scene}</p>
                 <p>支付状态：{payment.status_text}</p>
                 {isAlipayRedirect ? <p>支付宝收银台已打开，请在新页面完成付款。</p> : null}
-                {!isAlipayRedirect && qrCodeUrl ? <p>支付参数：{qrCodeUrl}</p> : null}
                 <button className="plain-button" disabled={completing} onClick={() => void handlePaymentStatusCheck()} type="button">
-                  {completing ? "查询中" : isAlipayRedirect ? "我已完成支付，查询状态" : "查询支付状态"}
+                  {completing ? "查询中" : "我已完成支付，查询状态"}
                 </button>
               </div>
             </section>
@@ -160,12 +159,13 @@ export const PaymentPage: React.FC<{
             <ShieldCheck size={18} />
             <span>支付环境已加密</span>
           </div>
-          <h2>订单摘要</h2>
-          <SummaryRow label="订单号" value={order.order_no} />
-          <SummaryRow label="订单状态" value={order.status_text} />
+          <h2>{isTradePayment ? "交易摘要" : "订单摘要"}</h2>
+          <SummaryRow label={isTradePayment ? "交易号" : "订单号"} value={referenceNo} />
+          <SummaryRow label={isTradePayment ? "交易状态" : "订单状态"} value={trade?.status_text ?? order?.status_text ?? "-"} />
+          {trade ? <SummaryRow label="商户订单" value={`${trade.orders.length} 张`} /> : null}
           <SummaryRow label="支付方式" value={activePaymentMethod.label} />
           {payment ? <SummaryRow label="支付单" value={payment.payment_no} /> : null}
-          <strong>应付 {formatPrice(moneyFromCent(payment?.amount ?? order.payable_amount))}</strong>
+          <strong>应付 {formatPrice(moneyFromCent(payableAmount))}</strong>
           <div className="payment-summary-note">
             <CheckCircle2 size={16} />
             <span>请在支付完成前不要关闭页面。</span>

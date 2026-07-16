@@ -2,23 +2,22 @@ export type PageKey =
   | "home"
   | "product-list"
   | "product-detail"
-  | "reviews"
-  | "compare"
-  | "presale"
-  | "bundle"
   | "cart"
   | "cart-empty"
   | "auth"
   | "checkout"
   | "payment"
-  | "pickup"
   | "payment-result"
   | "payment-failed";
 
 export interface Product {
   id: string;
   apiId?: number;
+  merchantId?: number;
+  merchantName?: string;
+  merchantLogo?: string;
   skuId?: number;
+  skuName?: string;
   name: string;
   price: number;
   category: string;
@@ -32,8 +31,12 @@ export interface Product {
 
 export interface CartLine {
   id: string;
+  merchantId?: number;
+  merchantName?: string;
+  merchantLogo?: string;
   skuId?: number;
   productId?: number;
+  cover?: string;
   name: string;
   spec: string;
   price: number;

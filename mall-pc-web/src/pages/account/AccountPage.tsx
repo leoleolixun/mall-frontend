@@ -2,34 +2,25 @@ import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
-  Bell,
-  CheckCircle2,
   ChevronRight,
   Clock3,
-  CreditCard,
   Edit3,
-  Eye,
-  FileText,
   Heart,
   Home,
-  LockKeyhole,
   MapPin,
-  MessageCircle,
   Package,
   Plus,
-  ReceiptText,
-  ShieldCheck,
-  Star,
   Ticket,
   Trash2,
   Truck,
-  WalletCards,
   X
 } from "lucide-react";
 
-import type { AddressRequest, AddressResponse, AuthResponse, OrderResponse, UpdateProfileRequest } from "@/api/client";
+import type { AddressRequest, AddressResponse, AfterSaleResponse, AuthResponse, CouponResponse, OrderResponse, UpdateProfileRequest, UserCouponResponse } from "@/api/client";
 import { moneyFromCent } from "@/api/client";
 import { getCityOptions, getDistrictOptions, provinceOptions } from "@/features/address/helpers/areaOptions";
+import { ProductVisual } from "@/shared/components/ProductVisual";
+import type { Product } from "@/shared/types/domain";
 import { formatPrice } from "@/shared/utils/money";
 
 export type AccountView =
@@ -39,25 +30,40 @@ export type AccountView =
   | "addresses"
   | "coupons"
   | "favorites"
-  | "history"
-  | "reviews"
-  | "points"
-  | "security"
-  | "privacy"
-  | "messages"
   | "afterSales";
 
 interface AccountPageProps {
+  addressListError: string;
+  addressLoading: boolean;
   addresses: AddressResponse[];
+  afterSaleError: string;
+  afterSaleLoading: boolean;
+  afterSales: AfterSaleResponse[];
+  availableCoupons: CouponResponse[];
+  couponError: string;
+  couponLoading: boolean;
+  favoriteError: string;
+  favoriteLoading: boolean;
+  favorites: Product[];
   lastOrder: OrderResponse | null;
+  orderError: string;
+  orderLoading: boolean;
   orders: OrderResponse[];
+  onAfterSaleCancel: (id: number) => Promise<boolean>;
   onAddressCreate: (payload: AddressRequest) => Promise<boolean>;
   onAddressDelete: (id: number) => Promise<boolean>;
   onAddressSetDefault: (id: number) => Promise<boolean>;
   onAddressUpdate: (id: number, payload: AddressRequest) => Promise<boolean>;
+  onAddressesReload: () => void;
+  onCouponClaim: (id: number) => Promise<boolean>;
+  onCouponUse: (id: number) => void;
+  onFavoriteToggle: (productId: number) => Promise<boolean>;
   onOrderPay: (order: OrderResponse) => void;
+  onOrdersReload: () => void;
+  onProductOpen: (product: Product) => void;
   onProfileUpdate: (payload: UpdateProfileRequest) => Promise<boolean>;
   user: AuthResponse["user"];
+  userCoupons: UserCouponResponse[];
   view?: AccountView;
 }
 
@@ -144,21 +150,10 @@ const navGroups = [
     ]
   },
   {
-    title: "我的资产",
+    title: "购物与售后",
     items: [
       { label: "优惠券", to: "/account/coupons", view: "coupons" },
       { label: "收藏商品", to: "/account/favorites", view: "favorites" },
-      { label: "浏览足迹", to: "/account/history", view: "history" },
-      { label: "评价晒单", to: "/account/reviews", view: "reviews" },
-      { label: "会员积分", to: "/account/points", view: "points" }
-    ]
-  },
-  {
-    title: "账号与消息",
-    items: [
-      { label: "账号安全", to: "/account/security", view: "security" },
-      { label: "隐私设置", to: "/account/privacy", view: "privacy" },
-      { label: "消息中心", to: "/account/messages", view: "messages" },
       { label: "售后服务", to: "/account/after-sales", view: "afterSales" }
     ]
   }
@@ -167,62 +162,56 @@ const navGroups = [
 const pageMeta: Record<AccountView, { title: string; desc: string }> = {
   overview: { title: "会员资产", desc: "查看购物资产、最近订单、常用地址和会员服务。" },
   profile: { title: "个人资料", desc: "维护基础资料、头像、昵称和联系信息。" },
-  orders: { title: "我的订单", desc: "跟踪全部订单状态，快速处理支付、收货和评价。" },
+  orders: { title: "我的订单", desc: "跟踪全部订单状态，处理支付、配送、收货和售后。" },
   addresses: { title: "地址管理", desc: "管理收货地址，设置常用地址并用于订单结算。" },
   coupons: { title: "优惠券", desc: "查看可用、即将过期和已使用的优惠券。" },
   favorites: { title: "收藏商品", desc: "管理关注商品，方便后续比价和下单。" },
-  history: { title: "浏览足迹", desc: "按时间回看最近浏览过的商品。" },
-  reviews: { title: "评价晒单", desc: "管理待评价、已评价和追评内容。" },
-  points: { title: "会员积分", desc: "查看积分余额、获取方式和积分流水。" },
-  security: { title: "账号安全", desc: "管理登录密码、手机绑定、实名认证和登录设备。" },
-  privacy: { title: "隐私设置", desc: "控制个性化推荐、消息授权和数据可见范围。" },
-  messages: { title: "消息中心", desc: "接收订单、活动、账户安全和售后通知。" },
   afterSales: { title: "售后服务", desc: "查看退换货、退款、维修等售后进度。" }
 };
-
-const coupons = [
-  { name: "新人专享券", amount: "¥30", rule: "满 199 可用", expires: "07-31 到期", status: "可用" },
-  { name: "会员复购券", amount: "¥50", rule: "满 399 可用", expires: "08-15 到期", status: "可用" },
-  { name: "运费抵扣券", amount: "¥12", rule: "全场通用", expires: "已使用", status: "已使用" }
-];
-
-const favoriteProducts = [
-  { name: "手冲咖啡豆", price: "¥128", note: "近 7 天降价 12 元" },
-  { name: "基础白 T", price: "¥99", note: "有货，可加入购物车" },
-  { name: "机械键盘", price: "¥399", note: "同类商品热卖" }
-];
-
-const historyItems = [
-  { date: "今天", items: ["手冲咖啡豆", "陶瓷滤杯", "便携保温杯"] },
-  { date: "昨天", items: ["基础白 T", "轻量运动鞋"] },
-  { date: "07-06", items: ["机械键盘", "桌面收纳架"] }
-];
-
-const messages = [
-  { type: "订单", title: "订单已创建，等待支付", time: "10:24", unread: true },
-  { type: "账户", title: "账号安全等级已更新", time: "昨天", unread: true },
-  { type: "活动", title: "会员专属优惠已到账", time: "07-06", unread: false }
-];
-
-const afterSalesCases = [
-  { no: "AS20260708001", product: "机械键盘", status: "审核中", progress: "商家将在 24 小时内处理" },
-  { no: "AS20260702003", product: "基础白 T", status: "已完成", progress: "退款已原路返回" }
-];
 
 const formatAddressText = (address: AddressResponse): string =>
   `${address.province}${address.city}${address.district}${address.detail}`;
 
+const formatDate = (value?: string | null): string => {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN");
+};
+
 export const AccountPage: React.FC<AccountPageProps> = ({
+  addressListError,
+  addressLoading,
   addresses,
+  afterSaleError,
+  afterSaleLoading,
+  afterSales,
+  availableCoupons,
+  couponError,
+  couponLoading,
+  favoriteError,
+  favoriteLoading,
+  favorites,
   lastOrder,
+  orderError,
+  orderLoading,
   orders,
+  onAfterSaleCancel,
   onAddressCreate,
   onAddressDelete,
   onAddressSetDefault,
   onAddressUpdate,
+  onAddressesReload,
+  onCouponClaim,
+  onCouponUse,
+  onFavoriteToggle,
   onOrderPay,
+  onOrdersReload,
+  onProductOpen,
   onProfileUpdate,
   user,
+  userCoupons,
   view = "overview"
 }) => {
   const [addressDialog, setAddressDialog] = useState<AddressDialog | null>(null);
@@ -235,13 +224,10 @@ export const AccountPage: React.FC<AccountPageProps> = ({
   const [profileError, setProfileError] = useState("");
   const [profileForm, setProfileForm] = useState<ProfileForm>(() => buildProfileForm(user));
   const [profileSaving, setProfileSaving] = useState(false);
-  const [messageScope, setMessageScope] = useState<"全部" | "未读">("全部");
-  const [recommendEnabled, setRecommendEnabled] = useState(true);
-  const [smsEnabled, setSmsEnabled] = useState(true);
+  const [actionId, setActionId] = useState<number | null>(null);
   const orderRows = useMemo(() => {
     const source = orders.length > 0 ? orders : lastOrder ? [lastOrder] : [];
     return source.map((order) => ({
-      action: order.status === 1 ? "去支付" : "查看",
       amount: formatPrice(moneyFromCent(order.payable_amount)),
       order,
       status: order.status_text,
@@ -249,7 +235,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({
     }));
   }, [lastOrder, orders]);
   const defaultAddresses = addresses.slice(0, 3);
-  const filteredMessages = messageScope === "未读" ? messages.filter((message) => message.unread) : messages;
+  const unusedCoupons = userCoupons.filter((item) => item.status === 1);
   const cityOptions = getCityOptions(addressForm.province);
   const districtOptions = getDistrictOptions(addressForm.province, addressForm.city);
   const accountName = user.nickname || user.mobile || `用户 ${user.id}`;
@@ -391,7 +377,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({
         <div className="account-avatar">{initial}</div>
         <div className="account-hero-copy">
           <h1>{user.nickname || "商城会员"}</h1>
-          <p>普通会员 · 积分 1280 · 手机号 {maskedMobile}</p>
+          <p>账号资料 · 手机号 {maskedMobile}</p>
         </div>
         <Link className="account-soft-link" to="/account/profile">完善资料</Link>
       </section>
@@ -399,23 +385,23 @@ export const AccountPage: React.FC<AccountPageProps> = ({
       <section className="account-assets-grid" aria-label="会员资产">
         <Link className="panel account-asset-card" to="/account/coupons">
           <Ticket size={20} />
-          <span>优惠券</span>
-          <strong>3 张</strong>
-        </Link>
-        <Link className="panel account-asset-card" to="/account/points">
-          <Star size={20} />
-          <span>会员积分</span>
-          <strong>1280</strong>
+          <span>可用优惠券</span>
+          <strong>{unusedCoupons.length} 张</strong>
         </Link>
         <Link className="panel account-asset-card" to="/account/favorites">
           <Heart size={20} />
           <span>收藏商品</span>
-          <strong>12 件</strong>
+          <strong>{favorites.length} 件</strong>
         </Link>
-        <Link className="panel account-asset-card" to="/account/security">
-          <ShieldCheck size={20} />
-          <span>安全等级</span>
-          <strong>高</strong>
+        <Link className="panel account-asset-card" to="/account/orders">
+          <Package size={20} />
+          <span>全部订单</span>
+          <strong>{orders.length} 笔</strong>
+        </Link>
+        <Link className="panel account-asset-card" to="/account/addresses">
+          <MapPin size={20} />
+          <span>收货地址</span>
+          <strong>{addresses.length} 个</strong>
         </Link>
       </section>
 
@@ -431,8 +417,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
         </div>
         <div className="account-service-grid">
           <Link to="/account/orders"><Package size={18} /><span>订单同步</span><ChevronRight size={16} /></Link>
-          <Link to="/account/messages"><Bell size={18} /><span>消息提醒</span><ChevronRight size={16} /></Link>
-          <Link to="/account/after-sales"><CreditCard size={18} /><span>售后服务</span><ChevronRight size={16} /></Link>
+          <Link to="/account/addresses"><MapPin size={18} /><span>地址管理</span><ChevronRight size={16} /></Link>
+          <Link to="/account/after-sales"><Truck size={18} /><span>售后服务</span><ChevronRight size={16} /></Link>
         </div>
       </section>
     </>
@@ -442,9 +428,17 @@ export const AccountPage: React.FC<AccountPageProps> = ({
     <section className="panel account-orders-panel">
       <div className="account-section-title">
         <h2>{title}</h2>
-        <Link to="/account/orders">{compact ? "查看全部订单" : "订单筛选"}</Link>
+        {compact ? <Link to="/account/orders">查看全部订单</Link> : <span>{orderRows.length} 笔订单</span>}
       </div>
-      <table className="account-order-table">
+      {orderLoading ? (
+        <div className="account-resource-state"><Clock3 size={24} /><strong>正在加载订单</strong></div>
+      ) : orderError ? (
+        <div className="account-resource-state error">
+          <strong>订单加载失败</strong>
+          <p>{orderError}</p>
+          <button className="plain-button small" onClick={onOrdersReload} type="button">重新加载</button>
+        </div>
+      ) : <table className="account-order-table">
         <thead>
           <tr>
             <th>订单号</th>
@@ -460,9 +454,10 @@ export const AccountPage: React.FC<AccountPageProps> = ({
               <td>{row.amount}</td>
               <td>{row.status}</td>
               <td>
-                <button onClick={() => row.order.status === 1 ? onOrderPay(row.order) : undefined} type="button">
-                  {row.action}
-                </button>
+                <div className="account-order-actions">
+                  <Link params={{ orderId: String(row.order.id) }} to="/account/orders/$orderId">查看详情</Link>
+                  {row.order.status === 1 ? <button onClick={() => onOrderPay(row.order)} type="button">去支付</button> : null}
+                </div>
               </td>
             </tr>
           )) : (
@@ -471,7 +466,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({
             </tr>
           )}
         </tbody>
-      </table>
+      </table>}
     </section>
   );
 
@@ -488,7 +483,15 @@ export const AccountPage: React.FC<AccountPageProps> = ({
           </button>
         )}
       </div>
-      {compact ? renderCompactAddressList() : renderAddressManager()}
+      {addressLoading ? (
+        <div className="account-resource-state"><Clock3 size={24} /><strong>正在加载收货地址</strong></div>
+      ) : addressListError ? (
+        <div className="account-resource-state error">
+          <strong>收货地址加载失败</strong>
+          <p>{addressListError}</p>
+          <button className="plain-button small" onClick={onAddressesReload} type="button">重新加载</button>
+        </div>
+      ) : compact ? renderCompactAddressList() : renderAddressManager()}
     </section>
   );
 
@@ -501,21 +504,11 @@ export const AccountPage: React.FC<AccountPageProps> = ({
           {address.is_default || index === 0 ? <strong>默认</strong> : null}
         </article>
       )) : (
-        <>
-          <article className="account-address-card active">
-            <MapPin size={16} />
-            <span>上海市浦东新区 XX 路 88 号</span>
-            <strong>默认</strong>
-          </article>
-          <article className="account-address-card">
-            <MapPin size={16} />
-            <span>杭州市西湖区 XX 街 21 号</span>
-          </article>
-          <article className="account-address-card">
-            <MapPin size={16} />
-            <span>北京市朝阳区 XX 路 9 号</span>
-          </article>
-        </>
+        <div className="account-address-empty compact">
+          <Home size={28} />
+          <strong>暂无收货地址</strong>
+          <p>新增地址后可在结算时直接选择。</p>
+        </div>
       )}
     </div>
   );
@@ -761,189 +754,155 @@ export const AccountPage: React.FC<AccountPageProps> = ({
     </form>
   );
 
-  const renderCoupons = (): React.ReactNode => (
-    <section className="account-card-grid three">
-      {coupons.map((coupon) => (
-        <article className={coupon.status === "已使用" ? "panel account-coupon-card muted" : "panel account-coupon-card"} key={coupon.name}>
-          <strong>{coupon.amount}</strong>
-          <div>
-            <h3>{coupon.name}</h3>
-            <p>{coupon.rule}</p>
-            <span>{coupon.expires}</span>
-          </div>
-          <button type="button">{coupon.status === "可用" ? "去使用" : "已使用"}</button>
-        </article>
-      ))}
-    </section>
-  );
+  const renderResourceState = (loading: boolean, error: string, emptyText: string): React.ReactNode => {
+    if (loading) {
+      return <section className="panel account-resource-state"><Clock3 size={24} /><strong>正在加载</strong></section>;
+    }
+    if (error) {
+      return <section className="panel account-resource-state error"><strong>数据加载失败</strong><p>{error}</p></section>;
+    }
+    return <section className="panel account-resource-state"><strong>{emptyText}</strong></section>;
+  };
 
-  const renderFavorites = (): React.ReactNode => (
-    <section className="account-card-grid three">
-      {favoriteProducts.map((product) => (
-        <article className="panel account-product-mini" key={product.name}>
-          <div className="account-product-thumb"><Heart size={18} /></div>
-          <h3>{product.name}</h3>
-          <strong>{product.price}</strong>
-          <p>{product.note}</p>
-          <button className="primary-button small" type="button">加入购物车</button>
-        </article>
-      ))}
-    </section>
-  );
+  const runAction = async (id: number, action: () => Promise<boolean>): Promise<void> => {
+    setActionId(id);
+    await action();
+    setActionId(null);
+  };
 
-  const renderHistory = (): React.ReactNode => (
-    <section className="panel account-list-panel">
-      {historyItems.map((group) => (
-        <article className="account-history-row" key={group.date}>
-          <strong>{group.date}</strong>
-          <div>
-            {group.items.map((item) => <span key={item}>{item}</span>)}
-          </div>
-        </article>
-      ))}
-    </section>
-  );
+  const renderCoupons = (): React.ReactNode => {
+    if (couponLoading || couponError) {
+      return renderResourceState(couponLoading, couponError, "暂无优惠券");
+    }
 
-  const renderReviews = (): React.ReactNode => (
-    <section className="account-card-grid two">
-      {["手冲咖啡豆", "基础白 T"].map((product, index) => (
-        <article className="panel account-review-card" key={product}>
-          <div>
-            <ReceiptText size={18} />
-            <strong>{product}</strong>
-          </div>
-          <p>{index === 0 ? "待评价，晒单可获得 20 积分。" : "已评价，可继续追评使用感受。"}</p>
-          <button className="plain-button small" type="button">{index === 0 ? "去评价" : "查看评价"}</button>
-        </article>
-      ))}
-    </section>
-  );
+    const ownedCouponIds = new Set(userCoupons.map((item) => item.coupon.id));
+    const claimableCoupons = availableCoupons.filter((coupon) => !coupon.claimed && !ownedCouponIds.has(coupon.id));
+    if (userCoupons.length === 0 && claimableCoupons.length === 0) {
+      return renderResourceState(false, "", "暂无可领取或已领取的优惠券");
+    }
 
-  const renderPoints = (): React.ReactNode => (
-    <div className="account-content-grid">
-      <section className="panel account-points-card">
-        <WalletCards size={26} />
-        <span>当前积分</span>
-        <strong>1280</strong>
-        <p>可用于兑换优惠券、抵扣部分商品金额。</p>
-      </section>
-      <section className="panel account-list-panel">
-        {[
-          ["购物下单", "+128", "07-08"],
-          ["评价晒单", "+20", "07-04"],
-          ["兑换优惠券", "-300", "07-01"]
-        ].map(([name, value, date]) => (
-          <article className="account-ledger-row" key={name}>
-            <span>{name}</span>
-            <strong>{value}</strong>
-            <small>{date}</small>
-          </article>
-        ))}
-      </section>
-    </div>
-  );
+    return (
+      <div className="account-resource-sections">
+        {userCoupons.length > 0 ? (
+          <section className="account-resource-section">
+            <div className="account-section-title"><h2>我的优惠券</h2><span>{userCoupons.length} 张</span></div>
+            <div className="account-card-grid three">
+              {userCoupons.map((item) => (
+                <article className={item.status === 1 ? "panel account-coupon-card" : "panel account-coupon-card muted"} key={item.id}>
+                  <strong>{formatPrice(moneyFromCent(item.coupon.discount_amount))}</strong>
+                  <div>
+                    <h3>{item.coupon.name}</h3>
+                    <p>{item.coupon.threshold_amount > 0 ? `满 ${formatPrice(moneyFromCent(item.coupon.threshold_amount))} 可用` : "无门槛"}</p>
+                    <span>{item.status_text} · {formatDate(item.coupon.end_at)} 到期</span>
+                  </div>
+                  <button disabled={item.status !== 1} onClick={() => onCouponUse(item.id)} type="button">
+                    {item.status === 1 ? "去使用" : item.status_text}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
-  const renderSecurity = (): React.ReactNode => (
-    <div className="account-content-grid">
-      <section className="panel account-security-panel">
-        <div className="account-security-level">
-          <ShieldCheck size={22} />
-          <div>
-            <strong>安全等级：高</strong>
-            <p>已绑定手机并开启异常登录提醒，请定期更新密码。</p>
-          </div>
-        </div>
-        {[
-          ["登录密码", "已设置，建议 90 天更换一次"],
-          ["手机绑定", "138****8888"],
-          ["实名认证", "未认证，可提升账户安全"],
-          ["登录保护", "异常设备登录提醒已开启"]
-        ].map(([name, desc]) => (
-          <article className="account-setting-row" key={name}>
-            <LockKeyhole size={16} />
-            <div><strong>{name}</strong><span>{desc}</span></div>
-            <button type="button">管理</button>
-          </article>
-        ))}
-      </section>
-      <section className="panel account-list-panel">
-        <div className="account-section-title">
-          <h2>最近登录</h2>
-          <span>近 7 天</span>
-        </div>
-        {["Chrome · 上海", "Safari · 杭州", "移动端 · 北京"].map((item, index) => (
-          <article className="account-ledger-row" key={item}>
-            <span>{item}</span>
-            <strong>{index === 0 ? "当前" : "正常"}</strong>
-            <small>07-0{4 - index}</small>
-          </article>
-        ))}
-      </section>
-    </div>
-  );
-
-  const renderPrivacy = (): React.ReactNode => (
-    <section className="panel account-security-panel">
-      <article className="account-setting-row">
-        <Eye size={16} />
-        <div><strong>个性化推荐</strong><span>根据浏览和购买偏好推荐商品。</span></div>
-        <button className={recommendEnabled ? "account-switch on" : "account-switch"} onClick={() => setRecommendEnabled((current) => !current)} type="button">
-          {recommendEnabled ? "开启" : "关闭"}
-        </button>
-      </article>
-      <article className="account-setting-row">
-        <MessageCircle size={16} />
-        <div><strong>短信通知</strong><span>订单、售后和安全通知通过短信发送。</span></div>
-        <button className={smsEnabled ? "account-switch on" : "account-switch"} onClick={() => setSmsEnabled((current) => !current)} type="button">
-          {smsEnabled ? "开启" : "关闭"}
-        </button>
-      </article>
-      <article className="account-setting-row">
-        <FileText size={16} />
-        <div><strong>数据导出</strong><span>导出账户资料、订单和售后记录。</span></div>
-        <button type="button">申请导出</button>
-      </article>
-    </section>
-  );
-
-  const renderMessages = (): React.ReactNode => (
-    <section className="panel account-list-panel">
-      <div className="account-filter-tabs">
-        {(["全部", "未读"] as const).map((scope) => (
-          <button className={messageScope === scope ? "active" : ""} key={scope} onClick={() => setMessageScope(scope)} type="button">
-            {scope}
-          </button>
-        ))}
+        {claimableCoupons.length > 0 ? (
+          <section className="account-resource-section">
+            <div className="account-section-title"><h2>可领取</h2><span>{claimableCoupons.length} 张</span></div>
+            <div className="account-card-grid three">
+              {claimableCoupons.map((coupon) => (
+                <article className="panel account-coupon-card" key={coupon.id}>
+                  <strong>{formatPrice(moneyFromCent(coupon.discount_amount))}</strong>
+                  <div>
+                    <h3>{coupon.name}</h3>
+                    <p>{coupon.threshold_amount > 0 ? `满 ${formatPrice(moneyFromCent(coupon.threshold_amount))} 可用` : "无门槛"}</p>
+                    <span>{formatDate(coupon.end_at)} 到期</span>
+                  </div>
+                  <button
+                    disabled={actionId === coupon.id}
+                    onClick={() => void runAction(coupon.id, () => onCouponClaim(coupon.id))}
+                    type="button"
+                  >
+                    {actionId === coupon.id ? "领取中" : "立即领取"}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
-      {filteredMessages.map((message) => (
-        <article className={message.unread ? "account-message-row unread" : "account-message-row"} key={message.title}>
-          <MessageCircle size={17} />
-          <div><strong>{message.title}</strong><span>{message.type} · {message.time}</span></div>
-          {message.unread ? <i>未读</i> : null}
-        </article>
-      ))}
-    </section>
-  );
+    );
+  };
 
-  const renderAfterSales = (): React.ReactNode => (
-    <section className="account-card-grid two">
-      {afterSalesCases.map((item) => (
-        <article className="panel account-after-card" key={item.no}>
-          <div className="account-after-title">
-            <Truck size={18} />
-            <strong>{item.product}</strong>
-            <span>{item.status}</span>
-          </div>
-          <p>{item.no}</p>
-          <div className="account-progress-line">
-            <CheckCircle2 size={16} />
-            <span>{item.progress}</span>
-          </div>
-          <button className="plain-button small" type="button">查看详情</button>
-        </article>
-      ))}
-    </section>
-  );
+  const renderFavorites = (): React.ReactNode => {
+    if (favoriteLoading || favoriteError || favorites.length === 0) {
+      return renderResourceState(favoriteLoading, favoriteError, "暂无收藏商品");
+    }
+
+    return (
+      <section className="account-card-grid three">
+        {favorites.map((product) => (
+          <article className="panel account-product-mini" key={product.id}>
+            <button className="account-product-thumb" onClick={() => onProductOpen(product)} type="button">
+              <ProductVisual alt={product.name} src={product.cover} />
+            </button>
+            <h3>{product.name}</h3>
+            <strong>{formatPrice(product.price)}</strong>
+            <div className="account-card-actions">
+              <button className="primary-button small" onClick={() => onProductOpen(product)} type="button">查看商品</button>
+              <button
+                className="plain-button small danger"
+                disabled={actionId === product.apiId}
+                onClick={() => product.apiId && void runAction(product.apiId, () => onFavoriteToggle(product.apiId as number))}
+                type="button"
+              >
+                {actionId === product.apiId ? "处理中" : "取消收藏"}
+              </button>
+            </div>
+          </article>
+        ))}
+      </section>
+    );
+  };
+
+  const renderAfterSales = (): React.ReactNode => {
+    if (afterSaleLoading || afterSaleError || afterSales.length === 0) {
+      return renderResourceState(afterSaleLoading, afterSaleError, "暂无售后记录");
+    }
+
+    return (
+      <section className="account-card-grid two">
+        {afterSales.map((item) => (
+          <article className="panel account-after-card" key={item.id}>
+            <div className="account-after-title">
+              <Truck size={18} />
+              <strong>{item.product_name}</strong>
+              <span>{item.status_text}</span>
+            </div>
+            <p>{item.after_sale_no} · 订单 {item.order_no}</p>
+            <div className="account-after-meta">
+              <span>{item.type_text}</span>
+              <span>{item.sku_name}</span>
+              <span>申请退款 {formatPrice(moneyFromCent(item.refund_amount))}</span>
+              <span>{formatDate(item.created_at)} 申请</span>
+            </div>
+            <p>{item.reason}{item.reject_reason ? ` · 驳回原因：${item.reject_reason}` : ""}</p>
+            <div className="account-card-actions">
+              <Link className="plain-button small" params={{ afterSaleId: String(item.id) }} to="/account/after-sales/$afterSaleId">查看详情</Link>
+              {item.status === 1 ? (
+                <button
+                  className="plain-button small danger"
+                  disabled={actionId === item.id}
+                  onClick={() => void runAction(item.id, () => onAfterSaleCancel(item.id))}
+                  type="button"
+                >
+                  {actionId === item.id ? "取消中" : "取消申请"}
+                </button>
+              ) : null}
+            </div>
+          </article>
+        ))}
+      </section>
+    );
+  };
 
   const renderContent = (): React.ReactNode => {
     switch (view) {
@@ -957,18 +916,6 @@ export const AccountPage: React.FC<AccountPageProps> = ({
         return renderCoupons();
       case "favorites":
         return renderFavorites();
-      case "history":
-        return renderHistory();
-      case "reviews":
-        return renderReviews();
-      case "points":
-        return renderPoints();
-      case "security":
-        return renderSecurity();
-      case "privacy":
-        return renderPrivacy();
-      case "messages":
-        return renderMessages();
       case "afterSales":
         return renderAfterSales();
       default:
@@ -1000,8 +947,7 @@ export const AccountPage: React.FC<AccountPageProps> = ({
             <p>{pageMeta[view].desc}</p>
           </div>
           <div className="account-head-meta">
-            <Clock3 size={16} />
-            <span>最近更新 10:30</span>
+            <span>{maskedMobile}</span>
           </div>
         </header>
         {renderContent()}

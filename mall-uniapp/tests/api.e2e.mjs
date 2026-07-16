@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
 
-const API_BASE = 'https://mall.leedu.ac.cn/api/v1'
+const API_BASE = (process.env.MALL_API_BASE || 'http://127.0.0.1:8080/api/v1').replace(/\/$/, '')
+const allowMutation = process.env.MALL_ALLOW_MUTATION_TESTS === '1'
+const allowProductionMutation = process.env.MALL_ALLOW_PRODUCTION_MUTATION === '1'
 const username = process.env.MALL_E2E_USERNAME || `codex_e2e_${Date.now()}`
 const password = process.env.MALL_E2E_PASSWORD || 'MallTest_260712!'
 const nickname = 'Codex E2E'
 const passed = []
+
+if (!allowMutation) {
+  throw new Error('写入验收未启用，请在隔离环境设置 MALL_ALLOW_MUTATION_TESTS=1')
+}
+if (new URL(API_BASE).hostname === 'mall.leedu.ac.cn' && !allowProductionMutation) {
+  throw new Error('拒绝修改正式商城数据；如已确认风险，需额外设置 MALL_ALLOW_PRODUCTION_MUTATION=1')
+}
 
 const request = async (name, path, options = {}) => {
   const { token, ...fetchOptions } = options
@@ -81,12 +90,35 @@ try {
 
   const categories = await request('list categories', '/categories')
   assert.equal(Array.isArray(categories), true)
+  const merchantPage = await request('list public merchants', '/merchants?page=1&page_size=20')
+  assert.equal(Array.isArray(merchantPage.list), true)
+  assert.equal(merchantPage.list.length > 0, true, 'no enabled merchant available')
+  const merchant = await request('public merchant detail', `/merchants/${merchantPage.list[0].id}`)
+  assert.equal(merchant.status, 1)
+  const merchantCategories = await request('merchant categories', `/merchants/${merchant.id}/categories`)
+  assert.equal(Array.isArray(merchantCategories), true)
+  const merchantProducts = await request('merchant products', `/merchants/${merchant.id}/products?page=1&page_size=20`)
+  assert.equal(Array.isArray(merchantProducts.list), true)
   const productPage = await request('list products', '/products?page=1&page_size=20')
   assert.equal(Array.isArray(productPage.list), true)
   assert.ok(productPage.list.length > 0, 'no product is available for E2E testing')
   const product = await request('product detail', `/products/${productPage.list[0].id}`)
   const sku = product.skus.find((item) => item.stock >= 2) || product.skus.find((item) => item.stock > 0)
   assert.ok(sku, 'no in-stock SKU is available for E2E testing')
+
+  await request('favorite product', '/favorites/products', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ product_id: product.id })
+  })
+  const favorites = await request('list favorites', '/favorites/products?page=1&page_size=20', { token })
+  assert.equal(favorites.list.some((item) => item.id === product.id), true)
+  await request('remove favorite', `/favorites/products/${product.id}`, { method: 'DELETE', token })
+
+  const coupons = await request('list available coupons', '/coupons', { token })
+  assert.equal(Array.isArray(coupons), true)
+  const myCoupons = await request('list my coupons', '/me/coupons', { token })
+  assert.equal(Array.isArray(myCoupons), true)
 
   await request('add cart item', '/cart/items', {
     method: 'POST',
@@ -162,46 +194,20 @@ try {
   })
   const orders = await request('list orders', '/orders?page=1&page_size=20', { token })
   assert.ok(orders.list.some((item) => item.id === order.id))
+  const orderDetail = await request('read order detail', `/orders/${order.id}`, { token })
+  assert.equal(orderDetail.order_no, order.order_no)
+  await request('cancel pending order', `/orders/${order.id}/cancel`, { method: 'POST', token })
+  const cancelledOrder = await request('read cancelled order', `/orders/${order.id}`, { token })
+  assert.equal(cancelledOrder.status, 5)
 
-  const payment = await request('create mock payment', '/payments', {
-    method: 'POST',
-    token,
-    body: JSON.stringify({ order_id: order.id, pay_channel: 'mock', pay_scene: 'mock' })
-  })
-  const paymentDetail = await request('read payment', `/payments/${encodeURIComponent(payment.payment_no)}`, { token })
-  assert.equal(paymentDetail.payment_no, payment.payment_no)
-  const paidPayment = await request('complete mock payment', `/payments/${encodeURIComponent(payment.payment_no)}/mock-complete`, {
-    method: 'POST',
-    token
-  })
-  assert.equal(paidPayment.status, 2)
-
-  await request('add second cart item', '/cart/items', {
-    method: 'POST',
-    token,
-    body: JSON.stringify({ sku_id: sku.id, quantity: 1 })
-  })
-  const secondPreview = await request('preview second order', '/orders/preview', {
-    method: 'POST',
-    token,
-    body: JSON.stringify({ address_id: address.id, items: orderItems })
-  })
-  const secondOrder = await request('create second order', '/orders', {
-    method: 'POST',
-    token,
-    body: JSON.stringify({
-      address_id: address.id,
-      remark: 'Codex E2E order pay endpoint test',
-      idempotency_token: secondPreview.idempotency_token,
-      items: orderItems
-    })
-  })
-  await request('pay order endpoint', `/orders/${secondOrder.id}/pay`, { method: 'POST', token })
+  const afterSales = await request('list after-sales', '/after-sales?page=1&page_size=20', { token })
+  assert.equal(Array.isArray(afterSales.list), true)
 
   cart = await request('read cart before cleanup', '/cart/items', { token })
   for (const item of cart) {
     await request(`delete cart SKU ${item.sku_id}`, `/cart/items/${item.sku_id}`, { method: 'DELETE', token })
   }
+  await request('delete retained address', `/addresses/${address.id}`, { method: 'DELETE', token })
 
   await request('logout', '/auth/logout', {
     method: 'POST',
